@@ -328,7 +328,7 @@ export default function ConnectedStudyOS() {
     subject_id:examSyllabusItem?.subject_id || nextExam.subject_id || null,
     chapter_id:examSyllabusItem?.chapter_id || null,
     topic_id:examSyllabusItem?.topic_id || null,
-    reason:['Exam Mode', nextExam.name+' · '+Math.max(0,daysUntil(nextExam.exam_date))+' days remaining', examSyllabusItem?.is_new_content?'New content prioritized':examSyllabusItem?'Confirmed syllabus prioritized':'No confirmed syllabus yet — using exam subject context']
+    reason:['Exam Mode', nextExam.name+' · '+Math.max(0,Number(daysUntil(nextExam.exam_date)??0))+' days remaining', examSyllabusItem?.is_new_content?'New content prioritized':examSyllabusItem?'Confirmed syllabus prioritized':'No confirmed syllabus yet — using exam subject context']
   } : null;
 
   const generalStudyNext = topRecommendation ?? (dueRevision ? {
@@ -461,7 +461,7 @@ export default function ConnectedStudyOS() {
         const rows=exams.map((exam:Row,i:number)=>{
           const item=workspace.syllabus.filter((x:Row)=>x.exam_id===exam.id&&x.user_verified&&x.inclusion!=='excluded').sort((a:Row,b:Row)=>Number(b.priority_score||0)+Number(b.blueprint_weight||0)+(b.is_new_content?20:0)-Number(a.priority_score||0)-Number(a.blueprint_weight||0)-(a.is_new_content?20:0))[0];
           const subject=subjectMap.get(exam.subject_id);
-          return {daily_plan_id:planId,user_id:session.user.id,subject_id:exam.subject_id,chapter_id:item?.chapter_id||null,topic_id:item?.topic_id||null,title:item?.label||('Prepare '+(subject?.name||exam.name)),activity_type:'exam_prep',estimated_minutes:minutes,priority_score:95-i*5,reason:['Exam Mode',exam.name+' · '+Math.max(0,daysUntil(exam.exam_date))+' days remaining',item?.is_new_content?'New content prioritized':item?'Confirmed syllabus prioritized':'Exam subject priority'],status:'todo',sort_order:todaysPlan.length+i};
+          return {daily_plan_id:planId,user_id:session.user.id,subject_id:exam.subject_id,chapter_id:item?.chapter_id||null,topic_id:item?.topic_id||null,title:item?.label||('Prepare '+(subject?.name||exam.name)),activity_type:'exam_prep',estimated_minutes:minutes,priority_score:95-i*5,reason:['Exam Mode',exam.name+' · '+Math.max(0,Number(daysUntil(exam.exam_date)??0))+' days remaining',item?.is_new_content?'New content prioritized':item?'Confirmed syllabus prioritized':'Exam subject priority'],status:'todo',sort_order:todaysPlan.length+i};
         });
         const r=await supabase.from('daily_plan_items').insert(rows); if(r.error){setError(r.error.message);return;}
         setToast('Exam Mode plan added '+rows.length+' priority subject'+(rows.length===1?'':'s')+'.'); await refresh(); return;
