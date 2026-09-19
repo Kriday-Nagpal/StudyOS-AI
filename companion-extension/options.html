@@ -1,0 +1,128 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>StudyOS Companion Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main class="page">
+    <aside class="rail">
+      <div class="brand">
+        <img src="studyos-mark.svg" alt="" />
+        <div><b>StudyOS</b><span>Learning Companion</span></div>
+      </div>
+
+      <div class="rail-copy">
+        <span>PRIVATE BETA</span>
+        <h1>Automation that stays under your control.</h1>
+        <p>Configure how the Companion tracks supported learning sessions and sends progress to your private StudyOS workspace.</p>
+      </div>
+
+      <div class="privacy-proof">
+        <span>✓</span>
+        <div><b>No browser-history permission</b><small>Automatic tracking is limited to supported learning domains.</small></div>
+      </div>
+
+      <div class="rail-footer">StudyOS Companion · v1.2.0</div>
+    </aside>
+
+    <section class="content">
+      <header>
+        <div><span>COMPANION SETTINGS</span><h2>Preferences & account</h2></div>
+        <button id="open-studyos" class="ghost">Open StudyOS ↗</button>
+      </header>
+
+      <section class="card account-card">
+        <div class="card-title">
+          <div><span>ACCOUNT</span><h3>StudyOS pairing</h3></div>
+          <span id="pair-status" class="pill">Checking…</span>
+        </div>
+        <p id="pair-copy">Checking this browser’s pairing state.</p>
+        <div class="account-actions">
+          <button id="pair" class="primary">Connect / reconnect</button>
+          <button id="disconnect" class="danger">Disconnect this browser</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">
+          <div><span>AUTOMATION</span><h3>Automatic lesson tracking</h3></div>
+        </div>
+
+        <label class="setting-row">
+          <div><b>Automatic progress sync</b><small>Save supported lesson progress while you study.</small></div>
+          <input id="auto-sync" class="switch-input" type="checkbox" /><i class="switch-ui"></i>
+        </label>
+
+        <div class="setting-row">
+          <div><b>Sync interval</b><small>How often active lesson progress is sent while playing.</small></div>
+          <select id="sync-interval">
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="120">2 minutes</option>
+            <option value="300">5 minutes</option>
+          </select>
+        </div>
+
+        <label class="setting-row">
+          <div><b>Sync when paused</b><small>Immediately save the current position when you pause.</small></div>
+          <input id="sync-pause" class="switch-input" type="checkbox" /><i class="switch-ui"></i>
+        </label>
+
+        <label class="setting-row">
+          <div><b>Sync when lesson ends</b><small>Mark final progress as soon as the video finishes.</small></div>
+          <input id="sync-end" class="switch-input" type="checkbox" /><i class="switch-ui"></i>
+        </label>
+
+        <label class="setting-row">
+          <div><b>Toolbar status badge</b><small>Show ON, OFF, !, or ERR on the StudyOS Companion icon.</small></div>
+          <input id="show-badge" class="switch-input" type="checkbox" /><i class="switch-ui"></i>
+        </label>
+
+        <label class="setting-row">
+          <div><b>Selected-text preview</b><small>Preview deliberately selected notes before Capture to StudyOS.</small></div>
+          <input id="selection-preview" class="switch-input" type="checkbox" /><i class="switch-ui"></i>
+        </label>
+
+        <div class="save-row">
+          <span id="save-state">Changes save automatically.</span>
+          <button id="save" class="primary compact">Save preferences</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">
+          <div><span>SUPPORTED SITES</span><h3>Automatic learning domains</h3></div>
+        </div>
+        <div class="sites">
+          <article><i>YT</i><div><b>YouTube</b><small>HTML5 lesson playback</small></div><span>Enabled</span></article>
+          <article><i>PW</i><div><b>Physics Wallah</b><small>PW lesson playback</small></div><span>Enabled</span></article>
+          <article><i>DI</i><div><b>DIKSHA</b><small>Supported video lessons</small></div><span>Enabled</span></article>
+          <article><i>KA</i><div><b>Khan Academy</b><small>Supported video lessons</small></div><span>Enabled</span></article>
+        </div>
+        <p class="site-note">Some pages may use special players that do not expose a standard HTML5 video element. StudyOS leaves those untouched rather than trying to bypass the platform.</p>
+      </section>
+
+      <section class="card">
+        <div class="card-title">
+          <div><span>SYNC HISTORY</span><h3>Recent Companion activity</h3></div>
+          <button id="clear-history" class="text-button">Clear local history</button>
+        </div>
+        <div id="recent-list" class="recent-list"><p class="empty">No Companion syncs yet.</p></div>
+      </section>
+
+      <section class="card privacy-card">
+        <div class="card-title"><div><span>PRIVACY</span><h3>Data controls</h3></div></div>
+        <p>StudyOS Companion stores pairing credentials and recent sync health locally in this browser. Lesson progress is sent over HTTPS to the signed-in student’s StudyOS workspace and protected by the same per-user Supabase RLS used by the app.</p>
+        <div class="link-row">
+          <button id="privacy">Read Companion Privacy Policy ↗</button>
+          <button id="learning">Open Learning Tracker ↗</button>
+        </div>
+      </section>
+    </section>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>
