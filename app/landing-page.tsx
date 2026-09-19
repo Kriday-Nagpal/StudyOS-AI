@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import ParticleDrift from '@/components/ui/particle-drift';
 import { useState } from 'react';
 import {
   ArrowRight, BarChart3, BookOpen, Brain, CalendarDays, Check, FileText,
@@ -29,7 +30,7 @@ export default function LandingPage(){
       {menu&&<div className="mobile-landing-menu"><a href="#product">Product</a><a href="#features">Features</a><a href="#workflow">How it works</a><Link href="/app">Open StudyOS</Link></div>}
     </nav>
 
-    <section className="landing-hero" id="product">
+    <section className="landing-hero" id="product"><ParticleDrift className="landing-particle-field" speed={0.38} density={0.62} opacity={0.42}/>
       <div className="hero-glow hero-glow-one"/><div className="hero-glow hero-glow-two"/>
       <div className="landing-hero-copy">
         <span className="hero-pill"><Sparkles size={14}/> PERSONAL ACADEMIC OPERATING SYSTEM</span>
