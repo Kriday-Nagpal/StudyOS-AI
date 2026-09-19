@@ -77,6 +77,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
   const supabase=getSupabaseClient();
   const playerRef=useRef<YTPlayer|null>(null);
   const syncTimerRef=useRef<ReturnType<typeof setInterval>|null>(null);
+  const titleRef=useRef(initialTitle);
   const [session,setSession]=useState<any>(null);
   const [loading,setLoading]=useState(true);
   const [url,setUrl]=useState(initialUrl);
@@ -101,6 +102,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
   const videoId=useMemo(()=>youtubeId(loadedUrl),[loadedUrl]);
   const isYoutube=Boolean(videoId);
   const completion=duration>0?Math.max(0,Math.min(100,current/duration*100)):0;
+  useEffect(()=>{titleRef.current=title},[title]);
   const filteredChapters=chapters.filter(ch=>!subjectId||ch.subject_id===subjectId||ch._subject_id===subjectId);
 
   useEffect(()=>{
@@ -152,7 +154,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
     const seconds=Math.max(0,Number(playerRef.current.getCurrentTime()||0));
     const total=Math.max(0,Number(playerRef.current.getDuration()||0));
     const data=playerRef.current.getVideoData?.()||{};
-    const lessonTitle=String(data.title||title||'YouTube lesson').slice(0,400);
+    const lessonTitle=String(data.title||titleRef.current||'YouTube lesson').slice(0,400);
     if(seconds<1||total<1)return;
     setSyncing(true);
     const response=await fetch('/api/learning/auto-progress',{
@@ -173,7 +175,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
     setTitle(lessonTitle);
     setCurrent(seconds);setDuration(total);setLastSync(new Date());
     setMapping(payload.mapped||null);
-  },[loadedUrl,session,title]);
+  },[loadedUrl,session]);
 
   useEffect(()=>{
     if(!videoId||!session)return;
@@ -197,10 +199,10 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
             const total=Number(player.getDuration()||0);
             setDuration(total);
             const canonical=canonicalYoutube(loadedUrl);
-            const {data:video}=await supabase?.from('videos').select('id,title').eq('user_id',session.user.id).eq('provider','youtube').eq('external_id',canonical).maybeSingle()||{data:null};
+            const {data:video}=await supabase.from('videos').select('id,title').eq('user_id',session.user.id).eq('provider','youtube').eq('external_id',canonical).maybeSingle();
             if(video?.title&&!title)setTitle(video.title);
             if(video?.id){
-              const {data:progress}=await supabase?.from('video_progress').select('*').eq('user_id',session.user.id).eq('video_id',video.id).maybeSingle()||{data:null};
+              const {data:progress}=await supabase.from('video_progress').select('*').eq('user_id',session.user.id).eq('video_id',video.id).maybeSingle();
               const resume=Number(progress?.last_position_seconds||0);
               if(resume>5&&resume<total-10){
                 player.seekTo(resume,true);setCurrent(resume);
@@ -253,7 +255,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
       void syncYoutube(true);
       playerRef.current?.destroy?.();playerRef.current=null;
     };
-  },[videoId,session,loadedUrl,supabase,syncYoutube,title]);
+  },[videoId,session,loadedUrl,supabase,syncYoutube]);
 
   useEffect(()=>{
     const onFocus=()=>{
