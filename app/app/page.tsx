@@ -1,0 +1,1 @@
+import ConnectedStudyOS from '../connected-studyos';\n\nexport default function StudyOSAppPage(){\n  return <ConnectedStudyOS/>;\n}\n
