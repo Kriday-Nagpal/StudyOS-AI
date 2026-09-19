@@ -171,7 +171,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
         force
       })
     });
-    const payload=await response.json().catch(()=>({}));
+    const payload=await response.json().catch(()=>({})) as {error?:string;mapped?:{subject_id?:string|null;chapter_id?:string|null;topic_id?:string|null;confidence?:number}};
     setSyncing(false);
     if(!response.ok){setError(payload.error||'Could not sync this lesson.');return;}
     setTitle(lessonTitle);
