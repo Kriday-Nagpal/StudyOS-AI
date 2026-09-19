@@ -1,22 +1,50 @@
 # StudyOS AI
 
-StudyOS AI is an exam-aware academic operating system. It combines the student's syllabus, datesheet, progress, revision schedule, mistakes, and study history to recommend the right next action.
+StudyOS AI is a personal academic operating system: a real-data study command center that combines curriculum, school syllabus, date sheets, exam blueprints, study sessions, progress, revision, mistakes, and academic documents to recommend the right next action.
 
-## Included product surfaces
+## Current architecture
 
-- Intelligent home dashboard and daily priority engine
-- Persistent daily plan with completion tracking
-- Focus timer with saved session progress
-- Subject map, chapter heatmap, exam roadmap, and readiness
-- Spaced revision queue and recurring mistake book
-- Weekly analytics and subject-balance insights
-- Academic document intake with automatic classification
-- Resource library, responsive mobile navigation, dark mode, and command palette
-- Context-aware StudyOS assistant
-- PWA manifest and branded social preview
-- Supabase-ready client and secure Postgres migration with RLS and private Storage policies
+- **Landing page:** premium StudyOS product experience at `/`
+- **Student workspace:** authenticated connected app at `/app`
+- **Frontend:** Next.js 16, React 19, TypeScript, Tailwind CSS, Motion, Lucide
+- **Backend:** Supabase Postgres, Auth, Storage, Row Level Security
+- **Academic data:** versioned source-aware curriculum metadata with official source links
+- **Private documents:** syllabus/date-sheet/blueprint/paper uploads in private Supabase Storage
 
-The app opens in a realistic demo workspace and keeps changes in local browser storage. Connect a Supabase project using the keys in `.env.example` to replace the demo data provider.
+## Real product surfaces
+
+- Study Next recommendation surface
+- Exam-aware dashboard
+- Daily plan and focus-session logging
+- Subject and chapter progress
+- Verified curriculum library
+- Exam syllabus comparison fields (new content, prior assessment count, blueprint weight, priority)
+- Exam roadmaps and readiness data
+- Spaced revision queue
+- Question-paper records and source-aware paper architecture
+- Real analytics computed from saved study sessions
+- Private academic document center
+- Learning resources
+- Video progress data model
+- Flashcards and spaced review data model
+- Doubt tracking
+- Notification preferences
+- Context-aware StudyOS assistant grounded in saved workspace data
+
+## No fake production data
+
+The production app does not silently fall back to demo student statistics. If there is not enough evidence for a metric, the UI shows an explicit empty state.
+
+Curriculum content is source-aware. StudyOS can store verified book/chapter/topic metadata, provenance, official links, and permitted content, but it must not republish full copyrighted textbook content without permission.
+
+## Environment
+
+Create `.env.local` from `.env.example` and set:
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+
+Never expose a Supabase service-role/secret key to the browser.
 
 ## Run locally
 
@@ -25,18 +53,18 @@ npm install
 npm run dev
 ```
 
-## Production
+## Verify
 
 ```bash
+npm run lint
 npm run build
-npm start
 ```
 
-## Supabase
+## Database
 
-Apply `supabase/migrations/202609190001_studyos_core.sql` to a Supabase project, then set:
+The connected Supabase project currently includes the academic intelligence core plus the additive learning-library migration:
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `supabase/migrations/202609190001_studyos_core.sql`
+- `supabase/migrations/202609190002_learning_library_and_engagement.sql`
 
-Never expose a Supabase secret/service-role key in browser environment variables.
+RLS is required for all student-owned tables and private storage paths.

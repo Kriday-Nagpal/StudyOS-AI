@@ -1,5 +1,5 @@
-import StudyOSApp from './studyos-app';
+import LandingPage from './landing-page';
 
 export default function HomePage() {
-  return <StudyOSApp />;
+  return <LandingPage />;
 }
