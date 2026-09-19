@@ -8,6 +8,7 @@ import {
   RefreshCw, Search, Send, Settings, Sparkles, Sun, Target, Upload, X,
 } from 'lucide-react';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
+import StudyOSAuth from '@/components/auth/studyos-auth';
 
 type View = 'Home'|'Today'|'Subjects'|'Library'|'Syllabus'|'Exams'|'Revision'|'Papers'|'Analytics'|'Documents'|'Resources';
 type Row = Record<string, any>;
@@ -344,7 +345,7 @@ export default function ConnectedStudyOS() {
 
   if (!isSupabaseConfigured) return <SetupRequired/>;
   if (loading && !session) return <Splash label="Connecting to StudyOS…"/>;
-  if (!session) return <AuthScreen/>;
+  if (!session) return <StudyOSAuth initialMode="signin" />;
   if (loading) return <Splash label="Loading your academic workspace…"/>;
   if (!workspace.profile?.onboarding_completed) return <Onboarding userId={session.user.id} onDone={refresh}/>;
 
@@ -412,27 +413,6 @@ function Splash({label}:{label:string}){return <main className="connected-splash
 
 function SetupRequired(){
   return <main className="setup-page"><section><span className="assistant-mark"><Sparkles/></span><h1>Connect StudyOS to Supabase</h1><p>This build intentionally refuses to show fabricated student data. Add the real project URL and publishable key to the deployment environment.</p><code>NEXT_PUBLIC_SUPABASE_URL</code><code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code></section></main>
-}
-
-function AuthScreen(){
-  const supabase=getSupabaseClient();
-  const [mode,setMode]=useState<'signin'|'signup'>('signin');
-  const [email,setEmail]=useState('');
-  const [password,setPassword]=useState('');
-  const [busy,setBusy]=useState(false);
-  const [message,setMessage]=useState('');
-  async function submit(e:React.FormEvent){
-    e.preventDefault(); if(!supabase)return; setBusy(true); setMessage('');
-    const r=mode==='signin'?await supabase.auth.signInWithPassword({email,password}):await supabase.auth.signUp({email,password});
-    if(r.error)setMessage(r.error.message); else if(mode==='signup'&&!r.data.session)setMessage('Account created. Check your email if confirmation is enabled.');
-    setBusy(false);
-  }
-  async function magic(){
-    if(!supabase||!email)return;
-    setBusy(true); const r=await supabase.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin}});
-    setMessage(r.error?r.error.message:'Magic link sent.'); setBusy(false);
-  }
-  return <main className="auth-page"><section className="auth-visual"><div className="auth-brand"><Sparkles/> StudyOS AI</div><div><span>PERSONAL ACADEMIC OS</span><h1>Know exactly what to study next.</h1><p>Real syllabus. Real datesheets. Real progress. No fake dashboards.</p></div></section><section className="auth-form"><form onSubmit={submit}><span className="assistant-mark"><Sparkles/></span><h2>{mode==='signin'?'Welcome back':'Create your StudyOS'}</h2><p>{mode==='signin'?'Continue your academic command center.':'Build your private study workspace.'}</p><label>Email<input type="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"/></label><label>Password<input type="password" required minLength={6} value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••••"/></label>{message&&<div className="form-message">{message}</div>}<button disabled={busy}>{busy?<Loader2 className="spin"/>:null}{mode==='signin'?'Sign in':'Create account'}</button><button type="button" className="secondary-auth" onClick={magic}>Email me a magic link</button><small>{mode==='signin'?'New to StudyOS?':'Already have an account?'} <button type="button" onClick={()=>setMode(mode==='signin'?'signup':'signin')}>{mode==='signin'?'Create account':'Sign in'}</button></small></form></section></main>
 }
 
 function Onboarding({userId,onDone}:{userId:string;onDone:()=>Promise<void>}){
