@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Check, Loader2, LockKeyhole, Sparkles, Video } from 'lucide-react';
 import { getSupabaseClient } from '@/lib/supabase';
+import StudyOSLogo from '@/components/studyos-logo';
 
 type Row = Record<string, any>;
 
@@ -181,7 +182,7 @@ export default function LearningCompanionCapture({
 
   return <main className="capture-page">
     <section className="capture-visual">
-      <div className="capture-brand"><Sparkles/>StudyOS AI</div>
+      <div className="capture-brand"><StudyOSLogo className="capture-studyos-logo"/></div>
       <div>
         <span className="capture-kicker">LEARNING COMPANION</span>
         <h1>Turn this page into learning evidence.</h1>
