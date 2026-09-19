@@ -48,8 +48,9 @@ export default function StudyOSAuth({ initialMode = 'signin', initialError = '' 
 
   const callbackUrl = useMemo(() => {
     if (typeof window === 'undefined') return '/auth';
+    const current = new URL(window.location.href);
     const url = new URL('/auth', window.location.origin);
-    url.searchParams.set('next', '/app');
+    url.searchParams.set('next', safeDestination(current.searchParams.get('next')));
     return url.toString();
   }, []);
 
