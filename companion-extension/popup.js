@@ -1,4 +1,5 @@
 const STUDYOS_CAPTURE = 'https://studyos-web-production.up.railway.app/capture';
+const STUDYOS_CONNECT = 'https://studyos-web-production.up.railway.app/companion/connect';
 
 async function currentTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -17,13 +18,35 @@ async function selectedText(tabId) {
   }
 }
 
+function pairStatus() {
+  return new Promise((resolve) => chrome.runtime.sendMessage({ type: 'GET_PAIR_STATUS' }, resolve));
+}
+
 async function init() {
+  const status = await pairStatus();
+  const badge = document.getElementById('status');
+  const copy = document.getElementById('status-copy');
+  const connect = document.getElementById('connect');
+
+  if (status?.paired) {
+    badge.textContent = 'AUTO ON';
+    badge.classList.add('on');
+    copy.textContent = 'Video progress can sync automatically on YouTube, PW, DIKSHA and Khan Academy.';
+    connect.textContent = 'Reconnect account';
+  } else {
+    badge.textContent = 'NOT PAIRED';
+    copy.textContent = 'Pair once with StudyOS, then supported video progress can sync automatically.';
+  }
+
+  connect.addEventListener('click', async () => {
+    await chrome.tabs.create({ url: STUDYOS_CONNECT });
+    window.close();
+  });
+
   const tab = await currentTab();
   const text = tab?.id ? await selectedText(tab.id) : '';
   const preview = document.getElementById('selection');
-  preview.textContent = text
-    ? 'Selected: ' + text.slice(0, 160) + (text.length > 160 ? '…' : '')
-    : 'No text selected — you can still capture the page and add notes in StudyOS.';
+  if (text) preview.textContent = 'Selected: ' + text.slice(0, 180) + (text.length > 180 ? '…' : '');
 
   document.getElementById('capture').addEventListener('click', async () => {
     const params = new URLSearchParams({

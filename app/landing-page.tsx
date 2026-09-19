@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import ParticleDrift from '@/components/ui/particle-drift';
+import StudyOSLogo from '@/components/studyos-logo';
 import {
   ArrowRight,
   BadgeCheck,
@@ -281,14 +282,8 @@ export default function LandingPage() {
 
       <header className="fixed inset-x-0 top-0 z-50 border-b border-white/[0.06] bg-black/65 backdrop-blur-2xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center px-5 lg:px-8">
-          <Link href="/" className="group flex items-center gap-3">
-            <span className="relative grid size-9 place-items-center rounded-xl border border-white/10 bg-white/[0.05] shadow-[0_0_35px_rgba(156,140,255,.12)]">
-              <Sparkles className="size-4.5 text-violet-200" />
-              <span className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-violet-300 shadow-[0_0_10px_rgba(167,139,250,.85)]" />
-            </span>
-            <span className="text-sm font-medium tracking-[.02em] text-white">
-              StudyOS <span className="font-light text-white/45">AI</span>
-            </span>
+          <Link href="/" className="group flex items-center gap-3 text-white">
+            <StudyOSLogo className="landing-studyos-logo" />
           </Link>
 
           <nav className="ml-auto hidden items-center gap-7 text-[11px] font-medium uppercase tracking-[.16em] text-white/45 md:flex">
