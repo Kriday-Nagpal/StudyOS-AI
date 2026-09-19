@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "StudyOS Learning Companion",
+  "version": "1.0.0",
+  "description": "Capture the current learning page and selected text into your private StudyOS workspace.",
+  "permissions": ["activeTab", "scripting", "contextMenus"],
+  "action": {
+    "default_title": "Capture to StudyOS",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

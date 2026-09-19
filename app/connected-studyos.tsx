@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3, Bell, BookOpen, Brain, CalendarDays, Check, ChevronRight, Clock3,
   FileText, Flame, FolderOpen, Library, ListPlus, Loader2, LockKeyhole, LogOut, Menu, Moon, Play,
-  Plus, RefreshCw, RotateCcw, Search, Send, Settings, Sparkles, Sun, Target, Timer, Upload, Video, X,
+  Plus, RotateCcw, Search, Send, Settings, Sparkles, Sun, Target, Timer, Upload, Video, X,
 } from 'lucide-react';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 import StudyOSAuth from '@/components/auth/studyos-auth';
@@ -22,6 +22,9 @@ type Workspace = {
   videos: Row[];
   videoProgress: Row[];
   notificationPreferences: Row | null;
+  flashcards: Row[];
+  flashcardReviews: Row[];
+  doubts: Row[];
   exams: Row[];
   syllabus: Row[];
   progress: Row[];
@@ -38,7 +41,7 @@ type Workspace = {
 };
 
 const emptyWorkspace: Workspace = {
-  profile:null, subjects:[], books:[], chapters:[], topics:[], videos:[], videoProgress:[], notificationPreferences:null, exams:[], syllabus:[], progress:[],
+  profile:null, subjects:[], books:[], chapters:[], topics:[], videos:[], videoProgress:[], notificationPreferences:null, flashcards:[], flashcardReviews:[], doubts:[], exams:[], syllabus:[], progress:[],
   revisions:[], recommendations:[], plans:[], planItems:[], sessions:[], documents:[],
   papers:[], resources:[], extractions:[], blueprints:[]
 };
@@ -118,7 +121,7 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
   const [
     subjectsRes, examsRes, syllabusRes, progressRes, revisionsRes, recommendationsRes,
     plansRes, planItemsRes, sessionsRes, documentsRes, papersRes, resourcesRes, extractionsRes, blueprintsRes,
-    videosRes, videoProgressRes, notificationPreferencesRes
+    videosRes, videoProgressRes, notificationPreferencesRes, flashcardsRes, flashcardReviewsRes, doubtsRes
   ] = await Promise.all([
     supabase.from('subjects').select('*').order('sort_order'),
     supabase.from('exams').select('*').order('exam_date'),
@@ -137,6 +140,9 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
     supabase.from('videos').select('*').order('created_at',{ascending:false}).limit(250),
     supabase.from('video_progress').select('*').order('updated_at',{ascending:false}).limit(250),
     supabase.from('notification_preferences').select('*').eq('user_id',userId).maybeSingle(),
+    supabase.from('flashcards').select('*').order('created_at',{ascending:false}).limit(500),
+    supabase.from('flashcard_reviews').select('*').order('reviewed_at',{ascending:false}).limit(1000),
+    supabase.from('doubts').select('*').eq('status','unresolved').order('created_at',{ascending:false}).limit(250),
   ]);
 
   let subjects: Row[] = subjectsRes.data ?? [];
@@ -182,6 +188,9 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
     videos: videosRes.data ?? [],
     videoProgress: videoProgressRes.data ?? [],
     notificationPreferences: notificationPreferencesRes.data ?? null,
+    flashcards: flashcardsRes.data ?? [],
+    flashcardReviews: flashcardReviewsRes.data ?? [],
+    doubts: doubtsRes.data ?? [],
     exams: examsRes.data ?? [],
     syllabus: syllabusRes.data ?? [],
     progress: progressRes.data ?? [],
@@ -205,7 +214,7 @@ export default function ConnectedStudyOS() {
   const [loading,setLoading] = useState(true);
   const [view,setView] = useState<View>('Home');
   const [dark,setDark] = useState(false);
-  const [subjectsPerDay,setSubjectsPerDay] = useState(4);
+  const [subjectsPerDay,setSubjectsPerDay] = useState(2);
   const [error,setError] = useState('');
   const [toast,setToast] = useState('');
   const [assistant,setAssistant] = useState(false);
@@ -237,12 +246,18 @@ export default function ConnectedStudyOS() {
 
   useEffect(()=>{
     const theme=window.localStorage.getItem('studyos-theme');
-    const count=Number(window.localStorage.getItem('studyos-subjects-per-day')||4);
+    const count=Number(window.localStorage.getItem('studyos-subjects-per-day')||2);
     setDark(theme==='dark');
-    setSubjectsPerDay(Number.isFinite(count)?Math.max(2,Math.min(6,count)):4);
+    setSubjectsPerDay(Number.isFinite(count)?Math.max(2,Math.min(6,count)):2);
   },[]);
 
   useEffect(()=>{window.localStorage.setItem('studyos-theme',dark?'dark':'light')},[dark]);
+
+  useEffect(()=>{
+    const requested=new URL(window.location.href).searchParams.get('view') as View | null;
+    const allowed=new Set<View>([...nav.map(([label])=>label),'Settings']);
+    if(requested&&allowed.has(requested))setView(requested);
+  },[]);
   useEffect(()=>{window.localStorage.setItem('studyos-subjects-per-day',String(subjectsPerDay))},[subjectsPerDay]);
 
   useEffect(()=>{
@@ -431,6 +446,44 @@ export default function ConnectedStudyOS() {
     if(!selected.length){setToast('Today already has balanced subject coverage.');return;}
 
     const rows=selected.map((s,i)=>{
+      const unfinishedVideos=workspace.videos
+        .filter((v:Row)=>v.subject_id===s.id)
+        .map((v:Row)=>({video:v,progress:workspace.videoProgress.find((p:Row)=>p.video_id===v.id)}))
+        .filter((x:Row)=>Number(x.progress?.completion||0)<90)
+        .sort((a:Row,b:Row)=>Number(b.progress?.completion||0)-Number(a.progress?.completion||0));
+
+      const subjectCards=workspace.flashcards.filter((card:Row)=>card.subject_id===s.id);
+      const dueCards=subjectCards.filter((card:Row)=>{
+        const review=workspace.flashcardReviews.find((r:Row)=>r.flashcard_id===card.id);
+        return !review?.next_due_at || new Date(review.next_due_at).getTime()<=Date.now();
+      });
+
+      if(unfinishedVideos.length && stableNumber(today+'|'+s.id+'|learning')%3!==0){
+        const learning=unfinishedVideos[0];
+        const completion=Number(learning.progress?.completion||0);
+        return {
+          daily_plan_id:planId,user_id:session.user.id,subject_id:s.id,
+          chapter_id:learning.video.chapter_id||null,topic_id:learning.video.topic_id||null,
+          title:`Continue: ${learning.video.title}`,activity_type:'video',
+          estimated_minutes:Math.min(minutes,Math.max(10,Math.round(Number(learning.video.duration_seconds||1200)/60*(1-completion/100)))),
+          priority_score:82-i*4,
+          reason:['Connected Learning','Tracked lesson is unfinished',`${Math.round(completion)}% complete`],
+          status:'todo',sort_order:todaysPlan.length+i
+        };
+      }
+
+      if(dueCards.length && stableNumber(today+'|'+s.id+'|flashcards')%2===0){
+        return {
+          daily_plan_id:planId,user_id:session.user.id,subject_id:s.id,
+          chapter_id:dueCards[0]?.chapter_id||null,topic_id:dueCards[0]?.topic_id||null,
+          title:`Review ${Math.min(dueCards.length,8)} flashcards · ${s.name}`,activity_type:'flashcards',
+          estimated_minutes:Math.min(15,minutes),
+          priority_score:78-i*4,
+          reason:['Learning Companion','Flashcards are due for review'],
+          status:'todo',sort_order:todaysPlan.length+i
+        };
+      }
+
       const bookIds=new Set(workspace.books
         .filter((b:Row)=>normalized(b.subject)===normalized(s.name))
         .map((b:Row)=>b.id));
@@ -572,18 +625,28 @@ export default function ConnectedStudyOS() {
 
   async function saveProfileSettings(input:Row){
     if(!supabase||!session?.user?.id)return;
-    const r=await supabase.from('profiles').update({
-      full_name:input.full_name,
-      class_level:Number(input.class_level),
-      board:input.board,
-      academic_session:input.academic_session,
-      school_name:input.school_name||null,
-      timezone:input.timezone||'Asia/Kolkata',
-      preferred_focus_minutes:Number(input.preferred_focus_minutes||25),
+    const payload={
+      id:session.user.id,
+      full_name:String(input.full_name||'').trim()||null,
+      class_level:Math.max(1,Math.min(12,Number(input.class_level||8))),
+      board:String(input.board||'CBSE'),
+      academic_session:String(input.academic_session||'2026-27'),
+      school_name:String(input.school_name||'').trim()||null,
+      timezone:String(input.timezone||'Asia/Kolkata'),
+      preferred_focus_minutes:Math.max(10,Math.min(120,Number(input.preferred_focus_minutes||25))),
+      onboarding_completed:true,
       updated_at:new Date().toISOString()
-    }).eq('id',session.user.id);
+    };
+    const r=await supabase.from('profiles').upsert(payload,{onConflict:'id'}).select('*').single();
     if(r.error){setError(r.error.message);return;}
-    setToast('Profile settings saved.');
+    if(payload.class_level===8&&payload.board==='CBSE'){
+      await supabase.from('subjects').upsert(
+        CORE_CLASS8_SUBJECTS.map((s,i)=>({user_id:session.user.id,name:s.name,color:s.color,sort_order:i})),
+        {onConflict:'user_id,name'}
+      );
+    }
+    setWorkspace(prev=>({...prev,profile:r.data||payload}));
+    setToast('Profile and study preferences saved.');
     await refresh();
   }
 
@@ -612,6 +675,23 @@ export default function ConnectedStudyOS() {
     const r=await supabase.auth.resetPasswordForEmail(session.user.email,{redirectTo:window.location.origin+'/auth'});
     if(r.error){setError(r.error.message);return;}
     setToast('Password reset email sent.');
+  }
+
+  async function generateLearningKit(video:Row,notes:string){
+    if(!supabase)return;
+    const {data}=await supabase.auth.getSession();
+    const token=data.session?.access_token;
+    if(!token){setError('Your session expired. Sign in again.');return;}
+    setToast('Building your study kit…');
+    const response=await fetch('/api/learning/analyze',{
+      method:'POST',
+      headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+      body:JSON.stringify({videoId:video.id,notes})
+    });
+    const payload=await response.json() as {error?:string;ai_used?:boolean;flashcards_created?:number;doubts_created?:number};
+    if(!response.ok){setError(payload.error||'Could not build the study kit.');return;}
+    setToast(`${payload.ai_used?'AI':'Quick'} study kit ready · ${payload.flashcards_created||0} flashcards${payload.doubts_created?' · '+payload.doubts_created+' doubts':''}`);
+    await refresh();
   }
 
   async function addSubject(name:string){
@@ -724,7 +804,7 @@ export default function ConnectedStudyOS() {
       <header className="connected-topbar">
         <button className="mobile-menu"><Menu size={20}/></button>
         <button className="smart-search" onClick={()=>setAssistant(true)}><Search size={17}/><span>Ask StudyOS about your real study data…</span><kbd>⌘ K</kbd></button>
-        <div className="top-actions"><span className="live-pill">LIVE DATA</span><button onClick={()=>setDark(v=>!v)}>{dark?<Sun size={17}/>:<Moon size={17}/>}</button><button><Bell size={17}/></button><span className="top-avatar">{initials}</span></div>
+        <div className="top-actions"><span className="live-pill">LIVE DATA</span><button onClick={()=>setDark(v=>!v)}>{dark?<Sun size={17}/>:<Moon size={17}/>}</button><button><Bell size={17}/></button><button className="top-profile-button" onClick={()=>setView('Settings')} title="Open profile and settings"><span className="top-avatar">{initials}</span><span className="top-profile-copy"><b>{workspace.profile.full_name?.split(' ')[0]||'Profile'}</b><small>Settings</small></span></button></div>
       </header>
 
       <div className="connected-content">
@@ -732,8 +812,8 @@ export default function ConnectedStudyOS() {
         {view==='Home'&&<Home workspace={workspace} studyNext={studyNext} nextExam={nextExam} streak={streak} weekMinutes={weekMinutes} subjectMap={subjectMap} chapterMap={chapterMap} start={beginFocus} upload={()=>fileRef.current?.click()} buildGeneralPlan={buildGeneralPlan}/>}
         {view==='Today'&&<Today workspace={workspace} items={todaysPlan} subjectMap={subjectMap} chapterMap={chapterMap} setStatus={setPlanStatus} start={beginFocus} buildGeneralPlan={buildGeneralPlan} addTask={addQuickTask}/>}
         {view==='Focus'&&<FocusHub workspace={workspace} subjectTime={subjectTime} start={beginFocus}/>}
-        {view==='Learning'&&<LearningTracker workspace={workspace} onAdd={addLearningVideo} onUpdate={updateLearningProgress}/>}
-        {view==='Subjects'&&<Subjects workspace={workspace} onAdd={addSubject}/>}
+        {view==='Learning'&&<LearningTracker workspace={workspace} onAdd={addLearningVideo} onUpdate={updateLearningProgress} onGenerateKit={generateLearningKit}/>}
+        {view==='Subjects'&&<Subjects workspace={workspace} onAdd={addSubject} start={beginFocus}/>}
         {view==='Library'&&<LibraryView workspace={workspace}/>}
         {view==='Syllabus'&&<Syllabus workspace={workspace} subjectMap={subjectMap} chapterMap={chapterMap} upload={()=>fileRef.current?.click()}/>}
         {view==='Exams'&&<Exams workspace={workspace} subjectMap={subjectMap}/>}
@@ -742,7 +822,7 @@ export default function ConnectedStudyOS() {
         {view==='Analytics'&&<Analytics workspace={workspace} subjectTime={subjectTime} weekMinutes={weekMinutes}/>}
         {view==='Documents'&&<Documents workspace={workspace} upload={()=>fileRef.current?.click()} confirm={confirmExtraction}/>}
         {view==='Resources'&&<Resources workspace={workspace}/>}
-        {view==='Settings'&&<SettingsPanel workspace={workspace} email={session.user.email||''} dark={dark} setDark={setDark} subjectsPerDay={subjectsPerDay} setSubjectsPerDay={setSubjectsPerDay} saveProfile={saveProfileSettings} saveNotifications={saveNotificationSettings} sendPasswordReset={sendPasswordReset} signOut={()=>supabase?.auth.signOut()}/>}
+        {view==='Settings'&&<SettingsPanel workspace={workspace} email={session.user.email||''} dark={dark} setDark={setDark} subjectsPerDay={subjectsPerDay} setSubjectsPerDay={setSubjectsPerDay} saveProfile={saveProfileSettings} saveNotifications={saveNotificationSettings} sendPasswordReset={sendPasswordReset} signOut={()=>supabase?.auth.signOut()} openView={setView}/>}
       </div>
     </section>
 
@@ -853,7 +933,7 @@ function FocusHub({workspace,subjectTime,start}:any){
 }
 
 
-function LearningTracker({workspace,onAdd,onUpdate}:any){
+function LearningTracker({workspace,onAdd,onUpdate,onGenerateKit}:any){
   const [url,setUrl]=useState('');
   const [title,setTitle]=useState('');
   const [subjectId,setSubjectId]=useState('');
@@ -871,6 +951,8 @@ function LearningTracker({workspace,onAdd,onUpdate}:any){
   const totalWatched=Math.round(workspace.videoProgress.reduce((n:number,p:Row)=>n+Number(p.watched_seconds||0),0)/60);
   const completed=workspace.videoProgress.filter((p:Row)=>Number(p.completion)>=90).length;
   const mappedTopics=new Set(workspace.videos.filter((v:Row)=>v.topic_id).map((v:Row)=>v.topic_id)).size;
+  const companionCards=workspace.flashcards.filter((card:Row)=>card.source_kind==='learning_companion').length;
+  const unresolvedDoubts=workspace.doubts.length;
 
   async function submit(e:React.FormEvent){
     e.preventDefault();
@@ -878,22 +960,23 @@ function LearningTracker({workspace,onAdd,onUpdate}:any){
     setUrl('');setTitle('');setChapterId('');setTopicId('');setCompletion(0);setWatchedMinutes(0);setSummary('');
   }
 
-  return <><SectionHead eyebrow="CONNECTED LEARNING" title="Learning tracker" copy="Track what you learn across YouTube, Physics Wallah, DIKSHA, Khan Academy, school videos and other lesson links—then map each item to a real subject, chapter and topic."/><div className="learning-metrics"><Metric icon={Video} label="Tracked lessons" value={String(workspace.videos.length)} detail="Across all connected learning sources"/><Metric icon={Clock3} label="Watched time" value={totalWatched?totalWatched+' min':'No watch time yet'} detail="From saved video progress"/><Metric icon={Check} label="90%+ complete" value={String(completed)} detail="Lessons almost or fully completed"/><Metric icon={Target} label="Topics mapped" value={String(mappedTopics)} detail="Curriculum topics connected to lessons"/></div><section className="connected-card learning-add-card"><header><div><span>ADD LEARNING</span><h3>Connect a lesson to StudyOS</h3><p>Paste the real lesson URL. StudyOS stores your progress and summary; it does not fabricate watch history.</p></div></header><form className="learning-add-form" onSubmit={submit}><label className="learning-wide">Lesson URL<input type="url" required value={url} onChange={e=>setUrl(e.target.value)} placeholder="YouTube, PW, DIKSHA, Khan Academy, school portal…"/></label><label className="learning-wide">Lesson title<input required value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Force and Pressure — One Shot"/></label><label>Subject<select value={subjectId} onChange={e=>{setSubjectId(e.target.value);setChapterId('');setTopicId('')}}><option value="">Unassigned</option>{workspace.subjects.map((s:Row)=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label>Chapter<select value={chapterId} onChange={e=>{setChapterId(e.target.value);setTopicId('')}}><option value="">No chapter</option>{chapters.map((ch:Row)=><option key={ch.id} value={ch.id}>{ch.title}</option>)}</select></label><label>Topic<select value={topicId} onChange={e=>setTopicId(e.target.value)}><option value="">No topic</option>{topics.map((t:Row)=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label><label>Video length<input type="number" min="1" max="720" value={durationMinutes} onChange={e=>setDurationMinutes(Number(e.target.value))}/><small>minutes</small></label><label>Watched<input type="number" min="0" max="720" value={watchedMinutes} onChange={e=>setWatchedMinutes(Number(e.target.value))}/><small>minutes</small></label><label>Completion<select value={completion} onChange={e=>setCompletion(Number(e.target.value))}>{[0,10,25,50,75,90,100].map(n=><option key={n} value={n}>{n}%</option>)}</select></label><label className="learning-wide">What did you learn?<textarea value={summary} onChange={e=>setSummary(e.target.value)} placeholder="Write or paste a short summary, formulas, concepts, doubts, or key takeaways…"/></label><button className="premium-button learning-save"><Plus size={15}/>Save learning progress</button></form></section><section className="learning-history"><div className="learning-history-head"><div><span>YOUR LEARNING STREAM</span><h3>Resume and update lessons</h3></div><small>{workspace.videos.length} tracked</small></div>{workspace.videos.length?<div className="learning-card-grid">{workspace.videos.map((video:Row)=><LearningVideoCard key={video.id} video={video} workspace={workspace} onUpdate={onUpdate}/>)}</div>:<Empty icon={Video} title="No connected lessons yet" copy="Add your first YouTube, Physics Wallah, DIKSHA, Khan Academy, school, or other lesson above."/>}</section></>
+  return <><SectionHead eyebrow="CONNECTED LEARNING" title="Learning tracker" copy="Track what you learn across YouTube, Physics Wallah, DIKSHA, Khan Academy, school videos and other lesson links—then map each item to a real subject, chapter and topic."/><div className="learning-metrics learning-metrics-five"><Metric icon={Video} label="Tracked lessons" value={String(workspace.videos.length)} detail="Across all connected learning sources"/><Metric icon={Clock3} label="Watched time" value={totalWatched?totalWatched+' min':'No watch time yet'} detail="From saved video progress"/><Metric icon={Check} label="90%+ complete" value={String(completed)} detail="Lessons almost or fully completed"/><Metric icon={Target} label="Topics mapped" value={String(mappedTopics)} detail="Curriculum topics connected to lessons"/><Metric icon={Brain} label="Companion flashcards" value={String(companionCards)} detail={unresolvedDoubts?unresolvedDoubts+' unresolved learning doubts':'Generated from your own learning notes'}/></div><section className="connected-card learning-add-card"><header><div><span>ADD LEARNING</span><h3>Connect a lesson to StudyOS</h3><p>Paste the real lesson URL. StudyOS stores your progress and summary; it does not fabricate watch history.</p></div></header><form className="learning-add-form" onSubmit={submit}><label className="learning-wide">Lesson URL<input type="url" required value={url} onChange={e=>setUrl(e.target.value)} placeholder="YouTube, PW, DIKSHA, Khan Academy, school portal…"/></label><label className="learning-wide">Lesson title<input required value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Force and Pressure — One Shot"/></label><label>Subject<select value={subjectId} onChange={e=>{setSubjectId(e.target.value);setChapterId('');setTopicId('')}}><option value="">Unassigned</option>{workspace.subjects.map((s:Row)=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label>Chapter<select value={chapterId} onChange={e=>{setChapterId(e.target.value);setTopicId('')}}><option value="">No chapter</option>{chapters.map((ch:Row)=><option key={ch.id} value={ch.id}>{ch.title}</option>)}</select></label><label>Topic<select value={topicId} onChange={e=>setTopicId(e.target.value)}><option value="">No topic</option>{topics.map((t:Row)=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label><label>Video length<input type="number" min="1" max="720" value={durationMinutes} onChange={e=>setDurationMinutes(Number(e.target.value))}/><small>minutes</small></label><label>Watched<input type="number" min="0" max="720" value={watchedMinutes} onChange={e=>setWatchedMinutes(Number(e.target.value))}/><small>minutes</small></label><label>Completion<select value={completion} onChange={e=>setCompletion(Number(e.target.value))}>{[0,10,25,50,75,90,100].map(n=><option key={n} value={n}>{n}%</option>)}</select></label><label className="learning-wide">What did you learn?<textarea value={summary} onChange={e=>setSummary(e.target.value)} placeholder="Write or paste a short summary, formulas, concepts, doubts, or key takeaways…"/></label><button className="premium-button learning-save"><Plus size={15}/>Save learning progress</button></form></section><section className="learning-history"><div className="learning-history-head"><div><span>YOUR LEARNING STREAM</span><h3>Resume and update lessons</h3></div><small>{workspace.videos.length} tracked</small></div>{workspace.videos.length?<div className="learning-card-grid">{workspace.videos.map((video:Row)=><LearningVideoCard key={video.id} video={video} workspace={workspace} onUpdate={onUpdate} onGenerateKit={onGenerateKit}/>)}</div>:<Empty icon={Video} title="No connected lessons yet" copy="Add your first YouTube, Physics Wallah, DIKSHA, Khan Academy, school, or other lesson above."/>}</section></>
 }
 
-function LearningVideoCard({video,workspace,onUpdate}:any){
+function LearningVideoCard({video,workspace,onUpdate,onGenerateKit}:any){
   const progress=workspace.videoProgress.find((p:Row)=>p.video_id===video.id);
   const resource=workspace.resources.find((r:Row)=>r.metadata?.kind==='video_summary'&&r.metadata?.video_id===video.id);
+  const kit=workspace.resources.find((r:Row)=>r.metadata?.kind==='ai_learning_artifacts'&&r.metadata?.video_id===video.id);
   const [completion,setCompletion]=useState(Number(progress?.completion||0));
   const [watchedMinutes,setWatchedMinutes]=useState(Math.round(Number(progress?.watched_seconds||0)/60));
   const [summary,setSummary]=useState(String(resource?.metadata?.summary||''));
   const subject=workspace.subjects.find((s:Row)=>s.id===video.subject_id);
   const chapter=workspace.chapters.find((ch:Row)=>ch.id===video.chapter_id);
   const topic=workspace.topics.find((t:Row)=>t.id===video.topic_id);
-  return <article className="connected-card learning-video-card"><div className="learning-source-row"><span className={'provider-chip provider-'+String(video.provider||'other')}>{providerLabel(video)}</span><span>{completion}% watched</span></div><h3>{video.title}</h3><p>{[subject?.name,chapter?.title,topic?.title].filter(Boolean).join(' · ')||'Not mapped to curriculum yet'}</p><div className="learning-progress"><i style={{width:Math.max(0,Math.min(100,completion))+'%'}}/></div><div className="learning-progress-controls"><label>Progress<select value={completion} onChange={e=>setCompletion(Number(e.target.value))}>{[0,10,25,50,75,90,100].map(n=><option key={n} value={n}>{n}%</option>)}</select></label><label>Watched<input type="number" min="0" max="720" value={watchedMinutes} onChange={e=>setWatchedMinutes(Number(e.target.value))}/><small>min</small></label></div><label className="learning-summary-label">Learning summary<textarea value={summary} onChange={e=>setSummary(e.target.value)} placeholder="Key concepts, formulas, examples, doubts…"/></label><div className="learning-card-actions">{video.url?<a href={video.url} target="_blank" rel="noreferrer"><Play size={14}/>Open lesson</a>:null}<button onClick={()=>onUpdate(video,{completion,watchedMinutes,summary})}><Check size={14}/>Save progress</button></div></article>
+  return <article className="connected-card learning-video-card"><div className="learning-source-row"><span className={'provider-chip provider-'+String(video.provider||'other')}>{providerLabel(video)}</span><span>{completion}% watched</span></div><h3>{video.title}</h3><p>{[subject?.name,chapter?.title,topic?.title].filter(Boolean).join(' · ')||'Not mapped to curriculum yet'}</p><div className="learning-progress"><i style={{width:Math.max(0,Math.min(100,completion))+'%'}}/></div><div className="learning-progress-controls"><label>Progress<select value={completion} onChange={e=>setCompletion(Number(e.target.value))}>{[0,10,25,50,75,90,100].map(n=><option key={n} value={n}>{n}%</option>)}</select></label><label>Watched<input type="number" min="0" max="720" value={watchedMinutes} onChange={e=>setWatchedMinutes(Number(e.target.value))}/><small>min</small></label></div><label className="learning-summary-label">Learning summary<textarea value={summary} onChange={e=>setSummary(e.target.value)} placeholder="Key concepts, formulas, examples, doubts…"/></label>{kit?<div className="learning-kit-preview"><span>STUDY KIT</span><p>{String(kit.metadata?.summary||'')}</p><small>{Array.isArray(kit.metadata?.key_points)?kit.metadata.key_points.length:0} key points · {kit.metadata?.ai_used?'AI-assisted':'quick fallback'}</small></div>:null}<div className="learning-card-actions">{video.url?<a href={video.url} target="_blank" rel="noreferrer"><Play size={14}/>Open lesson</a>:null}<button onClick={()=>onUpdate(video,{completion,watchedMinutes,summary})}><Check size={14}/>Save progress</button><button className="kit-button" disabled={summary.trim().length<20} onClick={()=>onGenerateKit(video,summary)}><Sparkles size={14}/>Build study kit</button></div></article>
 }
 
-function SettingsPanel({workspace,email,dark,setDark,subjectsPerDay,setSubjectsPerDay,saveProfile,saveNotifications,sendPasswordReset,signOut}:any){
+function SettingsPanel({workspace,email,dark,setDark,subjectsPerDay,setSubjectsPerDay,saveProfile,saveNotifications,sendPasswordReset,signOut,openView}:any){
   const profile=workspace.profile||{};
   const notifications=workspace.notificationPreferences||{};
   const [form,setForm]=useState({
@@ -915,13 +998,38 @@ function SettingsPanel({workspace,email,dark,setDark,subjectsPerDay,setSubjectsP
     quiet_hours_start:notifications.quiet_hours_start||'',
     quiet_hours_end:notifications.quiet_hours_end||''
   });
-  return <><SectionHead eyebrow="PERSONALIZATION" title="Settings & account" copy="Customize how StudyOS plans your day, manage your academic profile, notifications and account access."/><div className="settings-grid"><section className="connected-card settings-section settings-profile"><header><div><span>PROFILE</span><h3>Academic identity</h3></div></header><form onSubmit={async e=>{e.preventDefault();await saveProfile(form)}}><label>Name<input value={form.full_name} onChange={e=>setForm({...form,full_name:e.target.value})}/></label><div className="settings-row"><label>Class<select value={form.class_level} onChange={e=>setForm({...form,class_level:Number(e.target.value)})}>{Array.from({length:12},(_,i)=>i+1).map(n=><option key={n} value={n}>Class {n}</option>)}</select></label><label>Board<select value={form.board} onChange={e=>setForm({...form,board:e.target.value})}><option>CBSE</option><option>ICSE</option><option>State Board</option><option>IB</option><option>Cambridge</option><option>Custom</option></select></label></div><div className="settings-row"><label>Academic session<input value={form.academic_session} onChange={e=>setForm({...form,academic_session:e.target.value})}/></label><label>School<input value={form.school_name} onChange={e=>setForm({...form,school_name:e.target.value})} placeholder="Optional"/></label></div><div className="settings-row"><label>Default focus<select value={form.preferred_focus_minutes} onChange={e=>setForm({...form,preferred_focus_minutes:Number(e.target.value)})}>{[15,25,30,40,50,60].map(n=><option key={n} value={n}>{n} minutes</option>)}</select></label><label>Timezone<input value={form.timezone} onChange={e=>setForm({...form,timezone:e.target.value})}/></label></div><button className="premium-button"><Check size={15}/>Save profile</button></form></section><section className="connected-card settings-section"><header><div><span>PLANNER</span><h3>Daily study style</h3></div></header><div className="setting-control"><div><b>Subjects per day</b><p>Balanced Shuffle Plan will try to cover this many different subjects each day.</p></div><select value={subjectsPerDay} onChange={e=>setSubjectsPerDay(Number(e.target.value))}>{[2,3,4,5,6].map(n=><option key={n} value={n}>{n} subjects</option>)}</select></div><div className="setting-control"><div><b>Appearance</b><p>Switch the StudyOS workspace between light and dark themes.</p></div><div className="theme-segment"><button className={!dark?'active':''} onClick={()=>setDark(false)}><Sun size={14}/>Light</button><button className={dark?'active':''} onClick={()=>setDark(true)}><Moon size={14}/>Dark</button></div></div><div className="settings-callout"><Sparkles size={16}/><p><b>Balanced Shuffle is stable for the day.</b> It uses recent subject time, unfinished curriculum coverage and a daily deterministic shuffle so refreshing the page does not randomly destroy your plan.</p></div></section><section className="connected-card settings-section"><header><div><span>NOTIFICATIONS</span><h3>Study reminders</h3></div></header><form onSubmit={async e=>{e.preventDefault();await saveNotifications(notify)}} className="notification-settings">{[['browser_enabled','Browser reminders'],['email_enabled','Email reminders'],['revision_enabled','Revision due'],['homework_enabled','Homework'],['exam_enabled','Exam updates'],['weekly_report_enabled','Weekly report']].map(([key,label])=><label className="toggle-row" key={key}><div><b>{label}</b><small>{key==='exam_enabled'?'Only matters when you add exams':'You can change this anytime'}</small></div><input type="checkbox" checked={Boolean((notify as Row)[key])} onChange={e=>setNotify({...notify,[key]:e.target.checked})}/></label>)}<div className="settings-row"><label>Quiet hours start<input type="time" value={notify.quiet_hours_start} onChange={e=>setNotify({...notify,quiet_hours_start:e.target.value})}/></label><label>Quiet hours end<input type="time" value={notify.quiet_hours_end} onChange={e=>setNotify({...notify,quiet_hours_end:e.target.value})}/></label></div><button className="secondary-button"><Check size={15}/>Save notifications</button></form></section><section className="connected-card settings-section settings-account"><header><div><span>ACCOUNT</span><h3>Security & access</h3></div></header><div className="account-email"><span>Email</span><b>{email}</b></div><button className="secondary-button" onClick={sendPasswordReset}>Send password reset email</button><div className="privacy-note"><LockKeyhole/><div><b>Your learning history is private to your account.</b><p>Study sessions, tracked videos, summaries and academic documents are stored in your authenticated StudyOS workspace.</p></div></div><button className="danger-soft-button" onClick={signOut}><LogOut size={15}/>Sign out of StudyOS</button></section></div></>
+  return <><SectionHead eyebrow="PERSONALIZATION" title="Settings & account" copy="Customize how StudyOS plans your day, manage your academic profile, notifications and account access."/><div className="settings-grid"><section className="connected-card settings-section settings-profile"><header><div><span>PROFILE</span><h3>Academic identity</h3></div></header><form onSubmit={async e=>{e.preventDefault();await saveProfile(form)}}><label>Name<input value={form.full_name} onChange={e=>setForm({...form,full_name:e.target.value})}/></label><div className="settings-row"><label>Class<select value={form.class_level} onChange={e=>setForm({...form,class_level:Number(e.target.value)})}>{Array.from({length:12},(_,i)=>i+1).map(n=><option key={n} value={n}>Class {n}</option>)}</select></label><label>Board<select value={form.board} onChange={e=>setForm({...form,board:e.target.value})}><option>CBSE</option><option>ICSE</option><option>State Board</option><option>IB</option><option>Cambridge</option><option>Custom</option></select></label></div><div className="settings-row"><label>Academic session<input value={form.academic_session} onChange={e=>setForm({...form,academic_session:e.target.value})}/></label><label>School<input value={form.school_name} onChange={e=>setForm({...form,school_name:e.target.value})} placeholder="Optional"/></label></div><div className="settings-row"><label>Default focus<select value={form.preferred_focus_minutes} onChange={e=>setForm({...form,preferred_focus_minutes:Number(e.target.value)})}>{[15,25,30,40,50,60].map(n=><option key={n} value={n}>{n} minutes</option>)}</select></label><label>Timezone<input value={form.timezone} onChange={e=>setForm({...form,timezone:e.target.value})}/></label></div><button className="premium-button"><Check size={15}/>Save profile</button></form></section><section className="connected-card settings-section"><header><div><span>PLANNER</span><h3>Daily study style</h3></div></header><div className="setting-control"><div><b>Subjects per day</b><p>Balanced Shuffle Plan will try to cover this many different subjects each day.</p></div><select value={subjectsPerDay} onChange={e=>setSubjectsPerDay(Number(e.target.value))}>{[2,3,4,5,6].map(n=><option key={n} value={n}>{n} subjects</option>)}</select></div><div className="setting-control"><div><b>Appearance</b><p>Switch the StudyOS workspace between light and dark themes.</p></div><div className="theme-segment"><button className={!dark?'active':''} onClick={()=>setDark(false)}><Sun size={14}/>Light</button><button className={dark?'active':''} onClick={()=>setDark(true)}><Moon size={14}/>Dark</button></div></div><div className="settings-callout"><Sparkles size={16}/><p><b>Balanced Shuffle is stable for the day.</b> It uses recent subject time, unfinished curriculum coverage and a daily deterministic shuffle so refreshing the page does not randomly destroy your plan.</p></div><div className="settings-tools"><span>STUDY TOOLS</span><div><button onClick={()=>openView('Focus')}><Timer size={15}/><b>Focus Timer</b><small>Quick timed study</small></button><button onClick={()=>openView('Learning')}><Video size={15}/><b>Learning Tracker</b><small>YouTube, PW & more</small></button><button onClick={()=>openView('Today')}><ListPlus size={15}/><b>Daily Planner</b><small>2-subject default shuffle</small></button><button onClick={()=>openView('Library')}><Library size={15}/><b>NCERT Library</b><small>Current books & chapters</small></button></div></div></section><section className="connected-card settings-section"><header><div><span>NOTIFICATIONS</span><h3>Study reminders</h3></div></header><form onSubmit={async e=>{e.preventDefault();await saveNotifications(notify)}} className="notification-settings">{[['browser_enabled','Browser reminders'],['email_enabled','Email reminders'],['revision_enabled','Revision due'],['homework_enabled','Homework'],['exam_enabled','Exam updates'],['weekly_report_enabled','Weekly report']].map(([key,label])=><label className="toggle-row" key={key}><div><b>{label}</b><small>{key==='exam_enabled'?'Only matters when you add exams':'You can change this anytime'}</small></div><input type="checkbox" checked={Boolean((notify as Row)[key])} onChange={e=>setNotify({...notify,[key]:e.target.checked})}/></label>)}<div className="settings-row"><label>Quiet hours start<input type="time" value={notify.quiet_hours_start} onChange={e=>setNotify({...notify,quiet_hours_start:e.target.value})}/></label><label>Quiet hours end<input type="time" value={notify.quiet_hours_end} onChange={e=>setNotify({...notify,quiet_hours_end:e.target.value})}/></label></div><button className="secondary-button"><Check size={15}/>Save notifications</button></form></section><section className="connected-card settings-section settings-account"><header><div><span>ACCOUNT</span><h3>Security & access</h3></div></header><div className="account-email"><span>Email</span><b>{email}</b></div><button className="secondary-button" onClick={sendPasswordReset}>Send password reset email</button><div className="privacy-note"><LockKeyhole/><div><b>Your learning history is private to your account.</b><p>Study sessions, tracked videos, summaries and academic documents are stored in your authenticated StudyOS workspace.</p></div></div><button className="danger-soft-button" onClick={signOut}><LogOut size={15}/>Sign out of StudyOS</button></section></div></>
 }
 
-function Subjects({workspace,onAdd}:{workspace:Workspace;onAdd:(name:string)=>Promise<void>}){
+function Subjects({workspace,onAdd,start}:{workspace:Workspace;onAdd:(name:string)=>Promise<void>;start:(item:Row,minutes?:number)=>void}){
   const [name,setName]=useState('');
+  const [expanded,setExpanded]=useState<Record<string,boolean>>({});
+  const [chapterSearch,setChapterSearch]=useState<Record<string,string>>({});
   async function submit(e:React.FormEvent){e.preventDefault();if(!name.trim())return;await onAdd(name);setName('');}
-  return <><SectionHead eyebrow="ACADEMIC MAP" title="Subjects" copy="StudyOS supports everyday subject tracking with or without exams. Class 8 CBSE starts with all six core subjects, including Sanskrit." action={<form className="add-subject-inline" onSubmit={submit}><input value={name} onChange={e=>setName(e.target.value)} placeholder="Add another subject"/><button><Plus size={15}/>Add</button></form>}/><div className="subject-card-grid">{workspace.subjects.map(s=>{const rows=workspace.progress.filter(p=>p.subject_id===s.id);const avg=rows.length?Math.round(rows.reduce((n,p)=>n+Number(p.mastery||0),0)/rows.length):null;const sessions=workspace.sessions.filter(x=>x.subject_id===s.id);return <section className="connected-card subject-real" key={s.id}><header><span style={{background:s.color}}>{s.name.slice(0,2).toUpperCase()}</span><div><h3>{s.name}</h3><p>{sessions.length} session{sessions.length===1?'':'s'} · {rows.length} tracked chapter{rows.length===1?'':'s'}</p></div><ChevronRight/></header><div className="subject-metric"><span>Mastery evidence</span><b>{avg===null?'No evidence':avg+'%'}</b></div><div className="mini-progress"><i style={{width:(avg||0)+'%',background:s.color}}/></div></section>})}</div>{!workspace.subjects.length&&<Empty icon={BookOpen} title="No subjects yet" copy="Add a subject above and start a timer immediately—no exam setup needed."/>}</>;
+  return <><SectionHead eyebrow="ACADEMIC MAP" title="Subjects & chapters" copy="Current Class 8 curriculum metadata is prefilled where verified. Progress stays honest: chapters remain Not started until you actually study them." action={<form className="add-subject-inline" onSubmit={submit}><input value={name} onChange={e=>setName(e.target.value)} placeholder="Add another subject"/><button><Plus size={15}/>Add</button></form>}/><div className="subject-card-grid">{workspace.subjects.map(s=>{
+    const sessions=workspace.sessions.filter(x=>x.subject_id===s.id);
+    const books=workspace.books.filter((b:Row)=>normalized(b.subject)===normalized(s.name));
+    const bookIds=new Set(books.map((b:Row)=>b.id));
+    const allChapters=workspace.chapters.filter((ch:Row)=>bookIds.has(ch.curriculum_book_id)).sort((a:Row,b:Row)=>Number(a.sort_order||a.chapter_number||0)-Number(b.sort_order||b.chapter_number||0));
+    const q=(chapterSearch[s.id]||'').toLowerCase().trim();
+    const chapters=q?allChapters.filter((ch:Row)=>String(ch.title).toLowerCase().includes(q)):allChapters;
+    const done=allChapters.filter((ch:Row)=>Number(workspace.progress.find((p:Row)=>p.chapter_id===ch.id)?.completion||0)>=100).length;
+    const inProgress=allChapters.filter((ch:Row)=>{const v=Number(workspace.progress.find((p:Row)=>p.chapter_id===ch.id)?.completion||0);return v>0&&v<100}).length;
+    const isOpen=Boolean(expanded[s.id]);
+    return <section className={'connected-card subject-real subject-with-chapters '+(isOpen?'expanded':'')} key={s.id}>
+      <header><span style={{background:s.color}}>{s.name.slice(0,2).toUpperCase()}</span><div><h3>{s.name}</h3><p>{books[0]?.title||'Custom subject'} · {allChapters.length} chapter{allChapters.length===1?'':'s'}</p></div><button className="subject-expand-button" onClick={()=>setExpanded(v=>({...v,[s.id]:!v[s.id]}))}>{isOpen?<X size={16}/>:<ChevronRight size={16}/>}</button></header>
+      <div className="subject-overview-row"><div><span>Completed</span><b>{done}/{allChapters.length||'—'}</b></div><div><span>In progress</span><b>{inProgress}</b></div><div><span>Sessions</span><b>{sessions.length}</b></div></div>
+      <div className="mini-progress"><i style={{width:(allChapters.length?done/allChapters.length*100:0)+'%',background:s.color}}/></div>
+      {isOpen?<div className="subject-chapter-panel">
+        <div className="chapter-panel-head"><div><span>CURRENT CHAPTERS</span><b>{books.map((b:Row)=>b.title).join(' + ')||'No verified book linked'}</b></div>{allChapters.length>5?<input value={chapterSearch[s.id]||''} onChange={e=>setChapterSearch(v=>({...v,[s.id]:e.target.value}))} placeholder="Search chapters…"/>:null}</div>
+        {chapters.length?<div className="chapter-list">{chapters.map((ch:Row)=>{
+          const p=workspace.progress.find((x:Row)=>x.chapter_id===ch.id);
+          const completion=Math.max(0,Math.min(100,Number(p?.completion||0)));
+          const status=completion>=100?'Completed':completion>0?'In progress':'Not started';
+          return <article key={ch.id}><span className="chapter-number">{ch.chapter_number||'•'}</span><div className="chapter-copy"><b>{ch.title}</b><small>{ch.source_page||'Current verified curriculum metadata'} · {status}</small><div className="chapter-progress"><i style={{width:completion+'%',background:s.color}}/></div></div><button onClick={()=>start({subject_id:s.id,chapter_id:ch.id,title:ch.title,activity_type:completion>0?'practice':'learn',estimated_minutes:Number(workspace.profile?.preferred_focus_minutes||25)})}><Play size={14}/>{completion>0?'Continue':'Start'}</button></article>
+        })}</div>:<div className="chapter-empty"><BookOpen/><div><b>No verified chapter metadata yet</b><p>You can still study this subject normally while StudyOS waits for a verified curriculum index.</p></div></div>}
+      </div>:<button className="subject-show-chapters" onClick={()=>setExpanded(v=>({...v,[s.id]:true}))}><BookOpen size={14}/>Show current chapters</button>}
+    </section>})}</div>{!workspace.subjects.length&&<Empty icon={BookOpen} title="No subjects yet" copy="Add a subject above and start a timer immediately—no exam setup needed."/>}</>;
 }
 
 function LibraryView({workspace}:{workspace:Workspace}){return <><SectionHead eyebrow="VERIFIED CURRICULUM" title="NCERT & academic library" copy="Only current curriculum records from the StudyOS academic source registry are shown. Full copyrighted book text is not copied into the app."/><div className="library-grid">{workspace.books.map(b=>{const chapters=workspace.chapters.filter(c=>c.curriculum_book_id===b.id);return <section className="connected-card book-card" key={b.id}><div className="book-cover"><BookOpen/></div><div><span>{b.subject} · Class {b.class_level}</span><h3>{b.title}</h3><p>{b.edition_label || b.academic_year}</p><small>{chapters.length?chapters.length+' verified chapters':'Chapter index awaiting verification'}</small><div className="book-actions"><a href={b.source_url} target="_blank" rel="noreferrer">Open official source</a></div></div></section>})}</div>{!workspace.books.length&&<Empty icon={Library} title="No verified books found for this profile" copy="StudyOS will not substitute guessed textbook data. An administrator must verify and publish the curriculum version first."/>}</>}
