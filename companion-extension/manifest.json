@@ -1,14 +1,47 @@
 {
   "manifest_version": 3,
   "name": "StudyOS Learning Companion",
-  "version": "1.0.0",
-  "description": "Capture the current learning page and selected text into your private StudyOS workspace.",
-  "permissions": ["activeTab", "scripting", "contextMenus"],
+  "version": "1.1.0",
+  "description": "Automatically sync supported learning-video progress into your private StudyOS workspace.",
+  "permissions": ["activeTab", "scripting", "contextMenus", "storage"],
+  "host_permissions": [
+    "https://studyos-web-production.up.railway.app/*",
+    "https://*.youtube.com/*",
+    "https://youtu.be/*",
+    "https://*.pw.live/*",
+    "https://*.physicswallah.live/*",
+    "https://*.physicswallah.com/*",
+    "https://*.pwskills.com/*",
+    "https://*.diksha.gov.in/*",
+    "https://*.khanacademy.org/*"
+  ],
   "action": {
-    "default_title": "Capture to StudyOS",
+    "default_title": "StudyOS Learning Companion",
     "default_popup": "popup.html"
   },
   "background": {
     "service_worker": "background.js"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://studyos-web-production.up.railway.app/companion/connect*"],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/*",
+        "https://youtu.be/*",
+        "https://*.pw.live/*",
+        "https://*.physicswallah.live/*",
+        "https://*.physicswallah.com/*",
+        "https://*.pwskills.com/*",
+        "https://*.diksha.gov.in/*",
+        "https://*.khanacademy.org/*"
+      ],
+      "js": ["tracker.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ]
 }
