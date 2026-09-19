@@ -257,7 +257,7 @@ export default function ConnectedStudyOS() {
       method:'POST',
       body:JSON.stringify({documentId:ins.data.id}),
     });
-    const payload = await response.json();
+    const payload = await response.json() as { error?: string };
     if (!response.ok) { setError(payload.error || 'Document extraction failed'); await refresh(); return; }
     setToast('Extraction ready for review.');
     await refresh();
@@ -269,7 +269,7 @@ export default function ConnectedStudyOS() {
       method:'POST',
       body:JSON.stringify({extractionId,examId}),
     });
-    const payload = await response.json();
+    const payload = await response.json() as { error?: string };
     if(!response.ok){setError(payload.error || 'Could not confirm extraction');return;}
     setToast('Academic data confirmed and connected.');
     await refresh();
@@ -281,7 +281,7 @@ export default function ConnectedStudyOS() {
       method:'POST',
       body:JSON.stringify({examId,subjectId}),
     });
-    const payload = await response.json();
+    const payload = await response.json() as { error?: string };
     if(!response.ok){setError(payload.error || 'Paper generation failed');return;}
     setToast('Practice paper generated and validated.');
     await refresh();
