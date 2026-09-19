@@ -8,13 +8,13 @@ import { getSupabaseClient } from '@/lib/supabase';
 
 export default function CompanionConnect() {
   const supabase = getSupabaseClient();
-  const [loading,setLoading]=useState(true);
+  const [loading,setLoading]=useState(Boolean(supabase));
   const [connected,setConnected]=useState(false);
   const [message,setMessage]=useState('');
   const [error,setError]=useState('');
 
   useEffect(()=>{
-    if(!supabase){setLoading(false);return;}
+    if(!supabase)return;
     let active=true;
     void (async()=>{
       const {data}=await supabase.auth.getSession();
@@ -50,6 +50,7 @@ export default function CompanionConnect() {
     setMessage('Pairing signal sent. If the Companion is installed, it will confirm here in a moment.');
   }
 
+  if(!supabase)return <main className="companion-connect-page"><section className="companion-connect-card"><StudyOSLogo/><p>StudyOS is not connected to Supabase in this deployment.</p></section></main>;
   if(loading)return <main className="companion-connect-page"><Loader2 className="spin"/></main>;
 
   return <main className="companion-connect-page">
