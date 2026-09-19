@@ -14,6 +14,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import ParticleDrift from '@/components/ui/particle-drift';
+import StudyOSLogo from '@/components/studyos-logo';
 import { getSupabaseClient } from '@/lib/supabase';
 
 type Mode = 'signin' | 'signup';
@@ -217,11 +218,8 @@ export default function StudyOSAuth({ initialMode = 'signin', initialError = '' 
         <ParticleDrift className="absolute inset-0 h-full w-full opacity-75" speed={0.48} density={0.68} opacity={0.54} />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_40%_40%,rgba(105,78,230,.20),transparent_34%),linear-gradient(180deg,rgba(0,0,0,.15),rgba(0,0,0,.78))]" />
 
-        <Link href="/" className="relative z-10 flex items-center gap-3 text-sm font-semibold tracking-tight">
-          <span className="grid size-9 place-items-center rounded-xl border border-white/10 bg-white/[0.06]">
-            <Sparkles className="size-4 text-violet-200" />
-          </span>
-          StudyOS <span className="font-light text-white/45">AI</span>
+        <Link href="/" className="relative z-10 flex items-center gap-3 text-white">
+          <StudyOSLogo className="auth-studyos-logo" />
         </Link>
 
         <div className="relative z-10 max-w-xl">
@@ -260,12 +258,7 @@ export default function StudyOSAuth({ initialMode = 'signin', initialError = '' 
           </Link>
 
           <div className="mb-8 flex items-center justify-between lg:hidden">
-            <div className="flex items-center gap-2 font-semibold">
-              <span className="grid size-8 place-items-center rounded-lg bg-[#6654d7] text-white">
-                <Sparkles className="size-4" />
-              </span>
-              StudyOS AI
-            </div>
+            <StudyOSLogo className="auth-studyos-logo-mobile" />
             <span className="rounded-full border border-[#e5e2ef] bg-white px-3 py-1 text-[10px] font-semibold uppercase tracking-[.12em] text-[#8d879a]">
               Private workspace
             </span>
