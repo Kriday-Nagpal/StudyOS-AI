@@ -155,7 +155,7 @@ async function heuristicMapping(supabase: any, profile: Row | null, title: strin
   let confidence = Math.max(subjectScore, chapterScore, topicScore);
   let subjectId = bestSubject?.id || null;
   let chapterId = chapterScore >= 0.35 ? bestChapter?.id || null : null;
-  let topicId = topicScore >= 0.42 ? bestTopic?.id || null : null;
+  const topicId = topicScore >= 0.42 ? bestTopic?.id || null : null;
 
   if (chapterId && bestChapter) {
     const owningBook = books.find((book) => book.id === bestChapter?.curriculum_book_id);
