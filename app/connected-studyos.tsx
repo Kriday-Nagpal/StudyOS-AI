@@ -280,7 +280,9 @@ export default function ConnectedStudyOS() {
     return plan?.plan_date===today;
   }).sort((a,b)=>(a.sort_order??0)-(b.sort_order??0));
 
-  const nextExam = workspace.exams.find(e=>new Date(e.exam_date).getTime()>=Date.now()) ?? null;
+  const studyMode: 'general'|'exam' = workspace.profile?.study_mode==='exam'?'exam':'general';
+  const upcomingExams = [...workspace.exams].filter(e=>new Date(e.exam_date).getTime()>=Date.now()).sort((a,b)=>new Date(a.exam_date).getTime()-new Date(b.exam_date).getTime());
+  const nextExam = upcomingExams[0] ?? null;
   const dueRevision = workspace.revisions[0] ?? null;
   const topRecommendation = workspace.recommendations[0] ?? null;
   const topPlan = todaysPlan.find(i=>!['done','skipped'].includes(i.status)) ?? null;
@@ -315,14 +317,25 @@ export default function ConnectedStudyOS() {
     ]
   } : null;
 
-  const studyNext = topRecommendation ?? (dueRevision ? {
+  const examSyllabusItem = nextExam ? workspace.syllabus
+    .filter((item:Row)=>item.exam_id===nextExam.id && item.user_verified && item.inclusion!=='excluded')
+    .sort((a:Row,b:Row)=>Number(b.priority_score||0)+Number(b.blueprint_weight||0)+(b.is_new_content?20:0)-Number(a.priority_score||0)-Number(a.blueprint_weight||0)-(a.is_new_content?20:0))[0] : null;
+  const examNext = nextExam ? {
+    title: examSyllabusItem?.label || chapterMap.get(examSyllabusItem?.chapter_id)?.title || ('Prepare '+(subjectMap.get(nextExam.subject_id)?.name || nextExam.name)),
+    recommendation_type:'exam_priority',
+    estimated_minutes:Number(workspace.profile?.preferred_focus_minutes||25),
+    subject_id:examSyllabusItem?.subject_id || nextExam.subject_id || null,
+    chapter_id:examSyllabusItem?.chapter_id || null,
+    topic_id:examSyllabusItem?.topic_id || null,
+    reason:['Exam Mode', nextExam.name+' · '+Math.max(0,daysUntil(nextExam.exam_date))+' days remaining', examSyllabusItem?.is_new_content?'New content prioritized':examSyllabusItem?'Confirmed syllabus prioritized':'No confirmed syllabus yet — using exam subject context']
+  } : null;
+
+  const generalStudyNext = topRecommendation ?? (dueRevision ? {
     title: chapterMap.get(dueRevision.chapter_id)?.title || 'Revision due',
-    recommendation_type:'revise',
-    estimated_minutes:10,
-    subject_id:dueRevision.subject_id,
-    chapter_id:dueRevision.chapter_id,
-    reason:['Spaced revision is due']
+    recommendation_type:'revise', estimated_minutes:10, subject_id:dueRevision.subject_id,
+    chapter_id:dueRevision.chapter_id, reason:['Spaced revision is due']
   } : topPlan ?? generalNext);
+  const studyNext = studyMode==='exam' ? (examNext ?? generalStudyNext) : generalStudyNext;
 
   const streak = useMemo(()=>{
     const days = Array.from(new Set(workspace.sessions.filter(s=>Number(s.duration_minutes)>0).map(s=>dateKey(s.started_at)))).sort().reverse();
@@ -412,6 +425,14 @@ export default function ConnectedStudyOS() {
     await refresh();
   }
 
+  async function setStudyMode(next:'general'|'exam'){
+    if(!supabase||!session?.user?.id)return;
+    const r=await supabase.from('profiles').update({study_mode:next,updated_at:new Date().toISOString()}).eq('id',session.user.id).select('*').single();
+    if(r.error){setError(r.error.message);return;}
+    setWorkspace(prev=>({...prev,profile:r.data||{...prev.profile,study_mode:next}}));
+    setToast(next==='exam'?(nextExam?'Exam Mode active — nearest exam now leads planning.':'Exam Mode active — add an exam when ready; General Study remains the fallback.'):'General Study Mode active — balanced everyday learning restored.');
+  }
+
   async function ensureTodayPlan() {
     if(!supabase||!session?.user?.id) return null;
     const minutes=Number(workspace.profile?.preferred_focus_minutes||25);
@@ -419,7 +440,7 @@ export default function ConnectedStudyOS() {
       user_id:session.user.id,
       plan_date:today,
       available_minutes:Math.min(1440,minutes*subjectsPerDay),
-      generated_reason:{mode:'general_study',exam_required:false},
+      generated_reason:{mode:studyMode,exam_required:studyMode==='exam'},
       status:'active'
     },{onConflict:'user_id,plan_date'}).select('id').single();
     if(r.error){setError(r.error.message);return null;}
@@ -428,6 +449,23 @@ export default function ConnectedStudyOS() {
 
   async function buildGeneralPlan(){
     if(!supabase||!session?.user?.id||!workspace.subjects.length)return;
+    if(studyMode==='exam'){
+      if(!upcomingExams.length){setToast('No upcoming exam saved — using the General Study planner.');}
+      else {
+        const planId=await ensureTodayPlan(); if(!planId)return;
+        const minutes=Number(workspace.profile?.preferred_focus_minutes||25);
+        const existing=new Set(todaysPlan.filter((x:Row)=>x.subject_id&&!['done','skipped'].includes(x.status)).map((x:Row)=>x.subject_id));
+        const exams=upcomingExams.filter((e:Row)=>e.subject_id&&!existing.has(e.subject_id)).filter((e:Row,i:number,a:Row[])=>a.findIndex((x:Row)=>x.subject_id===e.subject_id)===i).slice(0,Math.max(0,subjectsPerDay-existing.size));
+        if(!exams.length){setToast('Today already covers your current Exam Mode subjects.');return;}
+        const rows=exams.map((exam:Row,i:number)=>{
+          const item=workspace.syllabus.filter((x:Row)=>x.exam_id===exam.id&&x.user_verified&&x.inclusion!=='excluded').sort((a:Row,b:Row)=>Number(b.priority_score||0)+Number(b.blueprint_weight||0)+(b.is_new_content?20:0)-Number(a.priority_score||0)-Number(a.blueprint_weight||0)-(a.is_new_content?20:0))[0];
+          const subject=subjectMap.get(exam.subject_id);
+          return {daily_plan_id:planId,user_id:session.user.id,subject_id:exam.subject_id,chapter_id:item?.chapter_id||null,topic_id:item?.topic_id||null,title:item?.label||('Prepare '+(subject?.name||exam.name)),activity_type:'exam_prep',estimated_minutes:minutes,priority_score:95-i*5,reason:['Exam Mode',exam.name+' · '+Math.max(0,daysUntil(exam.exam_date))+' days remaining',item?.is_new_content?'New content prioritized':item?'Confirmed syllabus prioritized':'Exam subject priority'],status:'todo',sort_order:todaysPlan.length+i};
+        });
+        const r=await supabase.from('daily_plan_items').insert(rows); if(r.error){setError(r.error.message);return;}
+        setToast('Exam Mode plan added '+rows.length+' priority subject'+(rows.length===1?'':'s')+'.'); await refresh(); return;
+      }
+    }
     const planId=await ensureTodayPlan();if(!planId)return;
     const minutes=Number(workspace.profile?.preferred_focus_minutes||25);
     const existing=new Set(todaysPlan.filter((x:Row)=>x.subject_id).map((x:Row)=>x.subject_id));
@@ -804,7 +842,7 @@ export default function ConnectedStudyOS() {
       <header className="connected-topbar">
         <button className="mobile-menu"><Menu size={20}/></button>
         <button className="smart-search" onClick={()=>setAssistant(true)}><Search size={17}/><span>Ask StudyOS about your real study data…</span><kbd>⌘ K</kbd></button>
-        <div className="top-actions"><span className="live-pill">LIVE DATA</span><button onClick={()=>setDark(v=>!v)}>{dark?<Sun size={17}/>:<Moon size={17}/>}</button><button><Bell size={17}/></button><button className="top-profile-button" onClick={()=>setView('Settings')} title="Open profile and settings"><span className="top-avatar">{initials}</span><span className="top-profile-copy"><b>{workspace.profile.full_name?.split(' ')[0]||'Profile'}</b><small>Settings</small></span></button></div>
+        <div className="top-actions"><div className="study-mode-switch" role="group" aria-label="Study mode"><button className={studyMode==='general'?'active':''} onClick={()=>setStudyMode('general')}><BookOpen size={14}/>General</button><button className={studyMode==='exam'?'active exam':''} onClick={()=>setStudyMode('exam')}><Target size={14}/>Exam</button></div><span className="live-pill">LIVE DATA</span><button onClick={()=>setDark(v=>!v)}>{dark?<Sun size={17}/>:<Moon size={17}/>}</button><button><Bell size={17}/></button><button className="top-profile-button" onClick={()=>setView('Settings')} title="Open profile and settings"><span className="top-avatar">{initials}</span><span className="top-profile-copy"><b>{workspace.profile.full_name?.split(' ')[0]||'Profile'}</b><small>Settings</small></span></button></div>
       </header>
 
       <div className="connected-content">
