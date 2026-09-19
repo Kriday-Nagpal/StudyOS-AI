@@ -1,6 +1,24 @@
-# StudyOS Learning Companion
+# StudyOS Learning Companion — Private Beta
 
-The Companion is the browser-side part of StudyOS automatic learning tracking.
+StudyOS Learning Companion is the browser-side automation layer for StudyOS learning tracking.
+
+## Private Beta UI
+
+Version 1.2 adds:
+- premium command-center popup;
+- live supported-site and lesson detection;
+- current video progress;
+- Auto Sync toggle;
+- Sync Now;
+- Capture Notes / Study Kit shortcut;
+- StudyOS Learning shortcut;
+- sync health and recent sync state;
+- full Companion Settings page;
+- pairing/disconnect controls;
+- configurable 30 sec / 1 min / 2 min / 5 min sync intervals;
+- pause/end sync controls;
+- toolbar badge preference;
+- local recent-sync clearing.
 
 ## Automatic mode
 
@@ -9,49 +27,26 @@ After pairing once at:
 `https://studyos-web-production.up.railway.app/companion/connect`
 
 the extension watches HTML5 learning-video progress on supported learning domains and periodically syncs:
-
-- lesson URL and title
-- current playback position
-- lesson duration
-- calculated completion percentage
-- pause/end resume position
+- lesson URL and title;
+- current playback position;
+- lesson duration;
+- calculated completion percentage;
+- pause/end resume position.
 
 Supported automatic domains currently include YouTube, Physics Wallah / PW, DIKSHA, and Khan Academy.
 
-StudyOS then:
-
-1. identifies the platform,
-2. reuses an existing subject/chapter/topic mapping when present,
-3. attempts a high-confidence curriculum mapping for new lessons,
-4. saves progress using the signed-in student's own Supabase session and RLS,
-5. creates a continue-learning or review recommendation,
-6. lets the daily planner resurface unfinished lessons.
-
 ## Study-kit capture
 
-The toolbar/context-menu capture remains available for deliberate notes or selected text. That flow can create summaries, flashcards, and explicit doubts after review.
+The toolbar/context-menu capture remains deliberate and review-first. It can pass the current page URL/title and text the student has deliberately selected to StudyOS. Study Kits can then create summaries, flashcards and explicit doubts from that student-supplied learning context.
 
-Automatic video progress does **not** silently copy full transcripts or private account history.
+Automatic progress does **not** silently copy full transcripts or private browser history.
 
-## Permissions
+## Store preparation
 
-The extension requests:
+See:
+- `STORE_LISTING_PRIVATE_BETA.md`
+- `PRIVATE_BETA_PUBLISHING.md`
+- `PRIVACY_IMPLEMENTATION.md`
 
-- `activeTab`
-- `scripting`
-- `contextMenus`
-- `storage`
-- host access only for the StudyOS production origin and supported learning domains
-
-It does not request Chrome browser-history permission.
-
-## Local installation
-
-1. Open your Chromium browser's extensions page.
-2. Enable developer mode.
-3. Choose **Load unpacked**.
-4. Select this `companion-extension` folder.
-5. Open the StudyOS Companion popup and choose **Connect automatic sync**.
-6. Sign in to StudyOS if needed and press **Connect Companion** once.
-
-After pairing, keep the extension enabled while using supported lesson sites.
+The public Companion privacy policy is:
+`https://studyos-web-production.up.railway.app/privacy/companion`
