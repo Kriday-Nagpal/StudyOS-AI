@@ -7,14 +7,116 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <main>
-    <div class="brand"><img src="studyos-mark.svg" alt="" /><b>StudyOS Companion</b><span id="status">Checking…</span></div>
-    <h1>Automatic learning sync</h1>
-    <p id="status-copy">Checking whether this browser is paired with your StudyOS account.</p>
-    <button id="connect" class="primary">Connect automatic sync</button>
-    <button id="capture" class="secondary">Capture current page / selection</button>
-    <div id="selection" class="selection">Select useful notes on the page if you want to build a study kit.</div>
-    <small>Automatic progress runs only on supported learning sites. No browser-history permission.</small>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <img src="studyos-mark.svg" alt="" />
+        <div>
+          <b>StudyOS</b>
+          <span>Learning Companion</span>
+        </div>
+      </div>
+      <button id="settings" class="icon-button" aria-label="Open Companion settings">⚙</button>
+    </header>
+
+    <section class="hero">
+      <div class="hero-top">
+        <span class="eyebrow">AUTOMATIC LEARNING SYNC</span>
+        <span id="pair-badge" class="status-pill">Checking</span>
+      </div>
+      <h1 id="hero-title">Connect your StudyOS</h1>
+      <p id="hero-copy">Pair this browser once to automatically save supported lesson progress.</p>
+
+      <div class="hero-actions">
+        <button id="primary-action" class="button primary">Connect Companion</button>
+        <label class="auto-toggle">
+          <span>
+            <b>Auto sync</b>
+            <small id="auto-copy">Every 30 seconds</small>
+          </span>
+          <input id="auto-sync" type="checkbox" />
+          <i></i>
+        </label>
+      </div>
+    </section>
+
+    <section id="lesson-card" class="lesson-card">
+      <div class="lesson-head">
+        <div id="platform-icon" class="platform-icon">▶</div>
+        <div class="lesson-title">
+          <span id="platform">Current tab</span>
+          <b id="lesson-title">Open a supported lesson</b>
+          <small id="support-copy">YouTube, Physics Wallah, DIKSHA or Khan Academy</small>
+        </div>
+        <span id="support-badge" class="mini-pill neutral">WAITING</span>
+      </div>
+
+      <div class="progress-wrap">
+        <div class="progress-meta">
+          <span id="progress-label">No active lesson detected</span>
+          <b id="progress-percent">0%</b>
+        </div>
+        <div class="progress-track"><i id="progress-bar"></i></div>
+        <div class="progress-time">
+          <span id="position">0:00</span>
+          <span id="duration">0:00</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="quick-grid">
+      <button id="sync-now" class="quick-action">
+        <span class="quick-icon">↻</span>
+        <b>Sync now</b>
+        <small>Save current position</small>
+      </button>
+      <button id="capture" class="quick-action">
+        <span class="quick-icon">✦</span>
+        <b>Capture notes</b>
+        <small>Build a Study Kit</small>
+      </button>
+      <button id="open-learning" class="quick-action">
+        <span class="quick-icon">▤</span>
+        <b>Learning</b>
+        <small>Open StudyOS tracker</small>
+      </button>
+      <button id="open-settings" class="quick-action">
+        <span class="quick-icon">⌘</span>
+        <b>Preferences</b>
+        <small>Automation controls</small>
+      </button>
+    </section>
+
+    <section class="health-card">
+      <div class="section-title">
+        <div>
+          <span>SYNC HEALTH</span>
+          <b>Recent activity</b>
+        </div>
+        <span id="health-dot" class="health-dot"></span>
+      </div>
+      <div id="last-sync" class="last-sync empty">
+        <span class="last-icon">✓</span>
+        <div>
+          <b>No sync yet</b>
+          <small>Watch a supported lesson after pairing.</small>
+        </div>
+      </div>
+      <div id="error-row" class="error-row hidden"></div>
+    </section>
+
+    <section class="supported-card">
+      <span>SUPPORTED AUTOMATION</span>
+      <div class="site-row">
+        <i>YT</i><i>PW</i><i>DI</i><i>KA</i>
+        <small>YouTube · PW · DIKSHA · Khan Academy</small>
+      </div>
+    </section>
+
+    <footer>
+      <span>Private Beta · No browser-history permission</span>
+      <button id="privacy">Privacy</button>
+    </footer>
   </main>
   <script src="popup.js"></script>
 </body>
