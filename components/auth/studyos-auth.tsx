@@ -11,7 +11,6 @@ import {
   LockKeyhole,
   Mail,
   ShieldCheck,
-  Sparkles,
 } from 'lucide-react';
 import ParticleDrift from '@/components/ui/particle-drift';
 import StudyOSLogo from '@/components/studyos-logo';
