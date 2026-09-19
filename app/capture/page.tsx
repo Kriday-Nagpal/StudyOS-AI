@@ -5,7 +5,7 @@ export const metadata = {
   description: 'Review and save the current lesson into your private StudyOS workspace.',
 };
 
-type CaptureParams = Promise<{url?:string;title?:string;text?:string}>;
+type CaptureParams = Promise<{url?:string;title?:string;text?:string;position?:string;duration?:string}>;
 
 export default async function CapturePage({searchParams}:{searchParams:CaptureParams}){
   const params=await searchParams;
@@ -13,5 +13,7 @@ export default async function CapturePage({searchParams}:{searchParams:CapturePa
     initialUrl={(params.url||'').slice(0,2000)}
     initialTitle={(params.title||'').slice(0,300)}
     initialText={(params.text||'').slice(0,12000)}
+    initialPosition={Math.max(0,Number(params.position||0)||0)}
+    initialDuration={Math.max(0,Number(params.duration||0)||0)}
   />;
 }
