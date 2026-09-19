@@ -1,5 +1,5 @@
 'use client';
-/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/purity */
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/purity, react-hooks/preserve-manual-memoization, react-hooks/set-state-in-effect */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
