@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 import StudyOSAuth from '@/components/auth/studyos-auth';
-import StudyOSLogo from '@/components/studyos-logo';
+import StudyOSLogo, { StudyOSMark } from '@/components/studyos-logo';
 
 type View = 'Home'|'Today'|'Focus'|'Learning'|'Subjects'|'Library'|'Syllabus'|'Exams'|'Revision'|'Papers'|'Analytics'|'Documents'|'Resources'|'Settings';
 type Row = Record<string, any>;
@@ -891,10 +891,10 @@ export default function ConnectedStudyOS() {
   </main>;
 }
 
-function Splash({label}:{label:string}){return <main className="connected-splash"><span><Sparkles size={24}/></span><Loader2 className="spin"/><b>{label}</b></main>}
+function Splash({label}:{label:string}){return <main className="connected-splash"><StudyOSMark size={42}/><Loader2 className="spin"/><b>{label}</b></main>}
 
 function SetupRequired(){
-  return <main className="setup-page"><section><span className="assistant-mark"><Sparkles/></span><h1>Connect StudyOS to Supabase</h1><p>This build intentionally refuses to show fabricated student data. Add the real project URL and publishable key to the deployment environment.</p><code>NEXT_PUBLIC_SUPABASE_URL</code><code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code></section></main>
+  return <main className="setup-page"><section><StudyOSLogo/><h1>Connect StudyOS to Supabase</h1><p>This build intentionally refuses to show fabricated student data. Add the real project URL and publishable key to the deployment environment.</p><code>NEXT_PUBLIC_SUPABASE_URL</code><code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code></section></main>
 }
 
 function Onboarding({userId,onDone}:{userId:string;onDone:()=>Promise<void>}){
@@ -932,7 +932,7 @@ function Onboarding({userId,onDone}:{userId:string;onDone:()=>Promise<void>}){
     }
     setBusy(false);await onDone();
   }
-  return <main className="onboarding-page"><section><span className="assistant-mark"><Sparkles/></span><span className="onboarding-kicker">SET UP YOUR ACADEMIC OS</span><h1>Build your StudyOS workspace</h1><p>Start with subjects, everyday study tracking and a focus timer. Exams, syllabi and date sheets are optional and can be added later for extra intelligence.</p>{classLevel===8&&board==='CBSE'?<div className="onboarding-core-subjects"><span>YOUR CORE 6 SUBJECTS</span><div>{CORE_CLASS8_SUBJECTS.map(s=><b key={s.name} style={{'--subject-color':s.color} as React.CSSProperties}>{s.name}</b>)}</div></div>:null}<form onSubmit={save}><label>Your name<input required value={name} onChange={e=>setName(e.target.value)} placeholder="Your name"/></label><div className="form-grid"><label>Class<select value={classLevel} onChange={e=>setClassLevel(Number(e.target.value))}>{Array.from({length:12},(_,i)=>i+1).map(n=><option key={n} value={n}>Class {n}</option>)}</select></label><label>Board<select value={board} onChange={e=>setBoard(e.target.value)}><option>CBSE</option><option>ICSE</option><option>State Board</option><option>IB</option><option>Cambridge</option><option>Custom</option></select></label></div><div className="form-grid"><label>Academic session<input value={session} onChange={e=>setSession(e.target.value)}/></label><label>School (optional)<input value={school} onChange={e=>setSchool(e.target.value)}/></label></div><label>Default focus block<select value={focusMinutes} onChange={e=>setFocusMinutes(Number(e.target.value))}>{[15,25,40,50,60].map(n=><option key={n} value={n}>{n} minutes</option>)}</select></label>{error&&<div className="form-message">{error}</div>}<button disabled={busy}>{busy?<Loader2 className="spin"/>:<Sparkles/>}Build my StudyOS</button></form></section></main>
+  return <main className="onboarding-page"><section><StudyOSLogo/><span className="onboarding-kicker">SET UP YOUR ACADEMIC OS</span><h1>Build your StudyOS workspace</h1><p>Start with subjects, everyday study tracking and a focus timer. Exams, syllabi and date sheets are optional and can be added later for extra intelligence.</p>{classLevel===8&&board==='CBSE'?<div className="onboarding-core-subjects"><span>YOUR CORE 6 SUBJECTS</span><div>{CORE_CLASS8_SUBJECTS.map(s=><b key={s.name} style={{'--subject-color':s.color} as React.CSSProperties}>{s.name}</b>)}</div></div>:null}<form onSubmit={save}><label>Your name<input required value={name} onChange={e=>setName(e.target.value)} placeholder="Your name"/></label><div className="form-grid"><label>Class<select value={classLevel} onChange={e=>setClassLevel(Number(e.target.value))}>{Array.from({length:12},(_,i)=>i+1).map(n=><option key={n} value={n}>Class {n}</option>)}</select></label><label>Board<select value={board} onChange={e=>setBoard(e.target.value)}><option>CBSE</option><option>ICSE</option><option>State Board</option><option>IB</option><option>Cambridge</option><option>Custom</option></select></label></div><div className="form-grid"><label>Academic session<input value={session} onChange={e=>setSession(e.target.value)}/></label><label>School (optional)<input value={school} onChange={e=>setSchool(e.target.value)}/></label></div><label>Default focus block<select value={focusMinutes} onChange={e=>setFocusMinutes(Number(e.target.value))}>{[15,25,40,50,60].map(n=><option key={n} value={n}>{n} minutes</option>)}</select></label>{error&&<div className="form-message">{error}</div>}<button disabled={busy}>{busy?<Loader2 className="spin"/>:<Sparkles/>}Build my StudyOS</button></form></section></main>
 }
 
 function SectionHead({eyebrow,title,copy,action}:{eyebrow:string;title:string;copy:string;action?:React.ReactNode}){return <header className="section-head"><div><span>{eyebrow}</span><h1>{title}</h1><p>{copy}</p></div>{action}</header>}
