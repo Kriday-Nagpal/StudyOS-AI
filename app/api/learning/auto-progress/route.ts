@@ -159,7 +159,7 @@ async function heuristicMapping(supabase: any, profile: Row | null, title: strin
 
   if (chapterId && bestChapter) {
     const owningBook = books.find((book) => book.id === bestChapter?.curriculum_book_id);
-    const owner = subjects.find((subject) => normalized(subject.name) === normalized(owningBook?.subject));
+    const owner = subjects.find((subject: Row) => normalized(subject.name) === normalized(owningBook?.subject));
     if (owner) {
       subjectId = owner.id;
       confidence = Math.max(confidence, chapterScore);
@@ -187,7 +187,7 @@ async function heuristicMapping(supabase: any, profile: Row | null, title: strin
       const aiConfidence = clamp(ai.confidence, 0, 1);
       if (chapter && aiConfidence >= 0.62) {
         const owningBook = books.find((book) => book.id === chapter.curriculum_book_id);
-        const owner = subjects.find((subject) => normalized(subject.name) === normalized(owningBook?.subject));
+        const owner = subjects.find((subject: Row) => normalized(subject.name) === normalized(owningBook?.subject));
         chapterId = chapter.id;
         subjectId = owner?.id || subjectId;
         confidence = aiConfidence;
