@@ -36,14 +36,14 @@ function safeDestination(value: string | null) {
   return value;
 }
 
-export default function StudyOSAuth({ initialMode = 'signin' }: { initialMode?: Mode }) {
+export default function StudyOSAuth({ initialMode = 'signin', initialError = '' }: { initialMode?: Mode; initialError?: string }) {
   const supabase = getSupabaseClient();
   const [mode, setMode] = useState<Mode>(initialMode);
   const [forgot, setForgot] = useState(false);
   const [recovery, setRecovery] = useState(false);
   const [pending, setPending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(initialError);
   const [message, setMessage] = useState('');
 
   const callbackUrl = useMemo(() => {
@@ -57,12 +57,6 @@ export default function StudyOSAuth({ initialMode = 'signin' }: { initialMode?: 
     if (!supabase) return;
 
     const params = new URL(window.location.href).searchParams;
-    const requestedMode = params.get('mode');
-    if (requestedMode === 'signup' || requestedMode === 'signin') setMode(requestedMode);
-
-    const callbackError = params.get('error_description') || params.get('error');
-    if (callbackError) setError(callbackError);
-
     let active = true;
 
     void (async () => {
