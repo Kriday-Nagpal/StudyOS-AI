@@ -371,13 +371,13 @@ export default function ConnectedStudyOS() {
 
       <div className="connected-content">
         {error&&<div className="error-banner"><span>{error}</span><button onClick={()=>setError('')}><X size={15}/></button></div>}
-        {view==='Home'&&<Home workspace={workspace} studyNext={studyNext} nextExam={nextExam} streak={streak} weekMinutes={weekMinutes} subjectMap={subjectMap} chapterMap={chapterMap} start={(item)=>{setFocus(item);setFocusSeconds(0);setFocusRunning(true)}} upload={()=>fileRef.current?.click()}/>}
-        {view==='Today'&&<Today items={todaysPlan} subjectMap={subjectMap} chapterMap={chapterMap} setStatus={setPlanStatus} start={(item)=>{setFocus(item);setFocusSeconds(0);setFocusRunning(true)}}/>}
+        {view==='Home'&&<Home workspace={workspace} studyNext={studyNext} nextExam={nextExam} streak={streak} weekMinutes={weekMinutes} subjectMap={subjectMap} chapterMap={chapterMap} start={(item:Row)=>{setFocus(item);setFocusSeconds(0);setFocusRunning(true)}} upload={()=>fileRef.current?.click()}/>}
+        {view==='Today'&&<Today items={todaysPlan} subjectMap={subjectMap} chapterMap={chapterMap} setStatus={setPlanStatus} start={(item:Row)=>{setFocus(item);setFocusSeconds(0);setFocusRunning(true)}}/>}
         {view==='Subjects'&&<Subjects workspace={workspace}/>}
         {view==='Library'&&<LibraryView workspace={workspace}/>}
         {view==='Syllabus'&&<Syllabus workspace={workspace} subjectMap={subjectMap} chapterMap={chapterMap} upload={()=>fileRef.current?.click()}/>}
         {view==='Exams'&&<Exams workspace={workspace} subjectMap={subjectMap}/>}
-        {view==='Revision'&&<Revision workspace={workspace} chapterMap={chapterMap} start={(item)=>{setFocus(item);setFocusSeconds(0);setFocusRunning(true)}}/>}
+        {view==='Revision'&&<Revision workspace={workspace} chapterMap={chapterMap} start={(item:Row)=>{setFocus(item);setFocusSeconds(0);setFocusRunning(true)}}/>}
         {view==='Papers'&&<Papers workspace={workspace} subjectMap={subjectMap} generate={generatePaper}/>}
         {view==='Analytics'&&<Analytics workspace={workspace} subjectTime={subjectTime} weekMinutes={weekMinutes}/>}
         {view==='Documents'&&<Documents workspace={workspace} upload={()=>fileRef.current?.click()} confirm={confirmExtraction}/>}
