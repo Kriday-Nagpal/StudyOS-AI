@@ -38,10 +38,14 @@ export default function LearningCompanionCapture({
   initialUrl,
   initialTitle,
   initialText,
+  initialPosition = 0,
+  initialDuration = 0,
 }: {
   initialUrl: string;
   initialTitle: string;
   initialText: string;
+  initialPosition?: number;
+  initialDuration?: number;
 }) {
   const supabase = getSupabaseClient();
   const [loading,setLoading]=useState(true);
@@ -60,8 +64,9 @@ export default function LearningCompanionCapture({
   const [subjectId,setSubjectId]=useState('');
   const [chapterId,setChapterId]=useState('');
   const [topicId,setTopicId]=useState('');
-  const [completion,setCompletion]=useState(0);
-  const [watchedMinutes,setWatchedMinutes]=useState(0);
+  const initialCompletion = initialDuration > 0 ? Math.max(0,Math.min(100,initialPosition/initialDuration*100)) : 0;
+  const [completion,setCompletion]=useState(Math.round(initialCompletion));
+  const [watchedMinutes,setWatchedMinutes]=useState(Math.max(0,Math.round(initialPosition/60)));
   const [generateKit,setGenerateKit]=useState(Boolean(initialText.trim()));
   const [result,setResult]=useState<{flashcards?:number;doubts?:number;ai?:boolean}|null>(null);
 
@@ -205,8 +210,9 @@ export default function LearningCompanionCapture({
         </div>
         <div className="capture-grid two">
           <label>Watched minutes<input type="number" min="0" max="720" value={watchedMinutes} onChange={e=>setWatchedMinutes(Number(e.target.value))}/></label>
-          <label>Completion<select value={completion} onChange={e=>setCompletion(Number(e.target.value))}>{[0,10,25,50,75,90,100].map(n=><option key={n} value={n}>{n}%</option>)}</select></label>
+          <label>Completion<input type="number" min="0" max="100" value={completion} onChange={e=>setCompletion(Math.max(0,Math.min(100,Number(e.target.value))))}/></label>
         </div>
+        {initialDuration>0?<div className="capture-auto-progress"><Check size={14}/><span>Chrome Bookmark Companion detected a video at <b>{Math.round(initialPosition)}s / {Math.round(initialDuration)}s</b> and prefilled this progress.</span></div>:null}
         <label>Selected notes / transcript excerpt<textarea value={notes} onChange={e=>setNotes(e.target.value.slice(0,12000))} placeholder="Select useful text on the lesson page before using Capture to StudyOS, or add your own notes here."/></label>
         <label className="capture-checkbox"><input type="checkbox" checked={generateKit} onChange={e=>setGenerateKit(e.target.checked)}/><div><b>Build a study kit after capture</b><span>Creates a concise summary, flashcards and only the doubts/questions actually present in these notes.</span></div></label>
         {error?<div className="capture-error">{error}</div>:null}
