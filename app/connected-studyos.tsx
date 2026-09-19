@@ -4,13 +4,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3, Bell, BookOpen, Brain, CalendarDays, Check, ChevronRight, Clock3,
-  FileText, Flame, FolderOpen, Library, Loader2, LogOut, Menu, Moon, Play,
-  RefreshCw, Search, Send, Settings, Sparkles, Sun, Target, Upload, X,
+  FileText, Flame, FolderOpen, Library, ListPlus, Loader2, LogOut, Menu, Moon, Play,
+  Plus, RefreshCw, RotateCcw, Search, Send, Settings, Sparkles, Sun, Target, Timer, Upload, X,
 } from 'lucide-react';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 import StudyOSAuth from '@/components/auth/studyos-auth';
 
-type View = 'Home'|'Today'|'Subjects'|'Library'|'Syllabus'|'Exams'|'Revision'|'Papers'|'Analytics'|'Documents'|'Resources';
+type View = 'Home'|'Today'|'Focus'|'Subjects'|'Library'|'Syllabus'|'Exams'|'Revision'|'Papers'|'Analytics'|'Documents'|'Resources';
 type Row = Record<string, any>;
 
 type Workspace = {
@@ -40,10 +40,21 @@ const emptyWorkspace: Workspace = {
 };
 
 const nav: Array<[View, any]> = [
-  ['Home',Sparkles],['Today',CalendarDays],['Subjects',BookOpen],['Library',Library],
+  ['Home',Sparkles],['Today',CalendarDays],['Focus',Timer],['Subjects',BookOpen],['Library',Library],
   ['Syllabus',Target],['Exams',FileText],['Revision',Brain],['Papers',FolderOpen],
   ['Analytics',BarChart3],['Documents',Upload],['Resources',Library],
 ];
+
+const CORE_CLASS8_SUBJECTS = [
+  {name:'English',color:'#7768e8'},
+  {name:'Hindi',color:'#e98954'},
+  {name:'Mathematics',color:'#4f8bd8'},
+  {name:'Science',color:'#46a873'},
+  {name:'Social Science',color:'#c47a42'},
+  {name:'Sanskrit',color:'#9a63d7'},
+] as const;
+
+const SUBJECT_COLOR_POOL = ['#7768e8','#4f8bd8','#46a873','#e98954','#9a63d7','#d35f78','#4aa6a6','#9a8748'];
 
 function pct(value: unknown) {
   const n = Number(value ?? 0);
@@ -93,6 +104,20 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
     supabase.from('exam_blueprints').select('*').order('created_at',{ascending:false}).limit(100),
   ]);
 
+  let subjects: Row[] = subjectsRes.data ?? [];
+  if (profile?.class_level === 8 && String(profile?.board || '').toUpperCase() === 'CBSE') {
+    const existing = new Set(subjects.map((s:Row)=>String(s.name).toLowerCase()));
+    const missing = CORE_CLASS8_SUBJECTS.filter(s=>!existing.has(s.name.toLowerCase()));
+    if (missing.length) {
+      await supabase.from('subjects').upsert(
+        missing.map((s,i)=>({user_id:userId,name:s.name,color:s.color,sort_order:subjects.length+i})),
+        {onConflict:'user_id,name'}
+      );
+      const refreshed = await supabase.from('subjects').select('*').order('sort_order');
+      subjects = refreshed.data ?? subjects;
+    }
+  }
+
   let books: Row[] = [];
   let chapters: Row[] = [];
   if (profile?.class_level && profile?.board) {
@@ -109,7 +134,7 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
 
   return {
     profile,
-    subjects: subjectsRes.data ?? [],
+    subjects,
     books,
     chapters,
     exams: examsRes.data ?? [],
@@ -142,6 +167,7 @@ export default function ConnectedStudyOS() {
   const [assistantMessages,setAssistantMessages] = useState<Array<{role:'user'|'ai';text:string}>>([]);
   const [focus,setFocus] = useState<Row|null>(null);
   const [focusSeconds,setFocusSeconds] = useState(0);
+  const [focusTargetSeconds,setFocusTargetSeconds] = useState(25*60);
   const [focusRunning,setFocusRunning] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -187,6 +213,37 @@ export default function ConnectedStudyOS() {
   const dueRevision = workspace.revisions[0] ?? null;
   const topRecommendation = workspace.recommendations[0] ?? null;
   const topPlan = todaysPlan.find(i=>!['done','skipped'].includes(i.status)) ?? null;
+
+  const recentMinutesBySubject = useMemo(()=>{
+    const cutoff=Date.now()-7*86400000;
+    const data = new Map<string,number>();
+    workspace.sessions.filter(s=>new Date(s.started_at).getTime()>=cutoff).forEach(s=>{
+      if(!s.subject_id) return;
+      data.set(s.subject_id,(data.get(s.subject_id)||0)+Number(s.duration_minutes||0));
+    });
+    return data;
+  },[workspace.sessions]);
+
+  const generalSubject = useMemo(()=>{
+    if(!workspace.subjects.length) return null;
+    return [...workspace.subjects].sort((a,b)=>{
+      const diff=(recentMinutesBySubject.get(a.id)||0)-(recentMinutesBySubject.get(b.id)||0);
+      return diff || Number(a.sort_order||0)-Number(b.sort_order||0);
+    })[0] || null;
+  },[workspace.subjects,recentMinutesBySubject]);
+
+  const generalNext = generalSubject ? {
+    title:`Focus on ${generalSubject.name}`,
+    recommendation_type:'general_focus',
+    estimated_minutes:Number(workspace.profile?.preferred_focus_minutes||25),
+    subject_id:generalSubject.id,
+    chapter_id:null,
+    reason:[
+      'General Study Mode is active — no exam or date sheet is required.',
+      'This subject has received the least study time in your recent balance.'
+    ]
+  } : null;
+
   const studyNext = topRecommendation ?? (dueRevision ? {
     title: chapterMap.get(dueRevision.chapter_id)?.title || 'Revision due',
     recommendation_type:'revise',
@@ -194,7 +251,7 @@ export default function ConnectedStudyOS() {
     subject_id:dueRevision.subject_id,
     chapter_id:dueRevision.chapter_id,
     reason:['Spaced revision is due']
-  } : topPlan);
+  } : topPlan ?? generalNext);
 
   const streak = useMemo(()=>{
     const days = Array.from(new Set(workspace.sessions.filter(s=>Number(s.duration_minutes)>0).map(s=>dateKey(s.started_at)))).sort().reverse();
@@ -216,14 +273,10 @@ export default function ConnectedStudyOS() {
   },[workspace.sessions]);
 
   const subjectTime = useMemo(()=>{
-    const cutoff=Date.now()-7*86400000;
-    const data = new Map<string,number>();
-    workspace.sessions.filter(s=>new Date(s.started_at).getTime()>=cutoff).forEach(s=>{
-      const name=subjectMap.get(s.subject_id)?.name || 'Unassigned';
-      data.set(name,(data.get(name)||0)+Number(s.duration_minutes||0));
-    });
-    return [...data.entries()].sort((a,b)=>b[1]-a[1]);
-  },[workspace.sessions,subjectMap]);
+    return workspace.subjects
+      .map(s=>[String(s.name),recentMinutesBySubject.get(s.id)||0] as [string,number])
+      .sort((a,b)=>b[1]-a[1]);
+  },[workspace.subjects,recentMinutesBySubject]);
 
   async function authFetch(path: string, init: RequestInit = {}) {
     if (!supabase) throw new Error('Supabase is unavailable');
@@ -288,6 +341,81 @@ export default function ConnectedStudyOS() {
     await refresh();
   }
 
+  async function ensureTodayPlan() {
+    if(!supabase||!session?.user?.id) return null;
+    const minutes=Number(workspace.profile?.preferred_focus_minutes||25);
+    const r=await supabase.from('daily_plans').upsert({
+      user_id:session.user.id,
+      plan_date:today,
+      available_minutes:Math.min(1440,minutes*3),
+      generated_reason:{mode:'general_study',exam_required:false},
+      status:'active'
+    },{onConflict:'user_id,plan_date'}).select('id').single();
+    if(r.error){setError(r.error.message);return null;}
+    return r.data?.id || null;
+  }
+
+  async function buildGeneralPlan(){
+    if(!supabase||!session?.user?.id||!workspace.subjects.length)return;
+    const planId=await ensureTodayPlan();if(!planId)return;
+    const minutes=Number(workspace.profile?.preferred_focus_minutes||25);
+    const existing=new Set(todaysPlan.filter((x:Row)=>x.subject_id).map((x:Row)=>x.subject_id));
+    const selected=[...workspace.subjects]
+      .sort((a,b)=>(recentMinutesBySubject.get(a.id)||0)-(recentMinutesBySubject.get(b.id)||0)||Number(a.sort_order||0)-Number(b.sort_order||0))
+      .filter(s=>!existing.has(s.id))
+      .slice(0,Math.min(3,workspace.subjects.length));
+    if(!selected.length){setToast('Today already has balanced subject tasks.');return;}
+    const rows=selected.map((s,i)=>({
+      daily_plan_id:planId,user_id:session.user.id,subject_id:s.id,chapter_id:null,topic_id:null,
+      title:`Study ${s.name}`,activity_type:'learn',estimated_minutes:minutes,
+      priority_score:70-i*5,
+      reason:['General Study Mode','Balanced subject rotation','No exam or date sheet required'],
+      status:'todo',sort_order:todaysPlan.length+i
+    }));
+    const r=await supabase.from('daily_plan_items').insert(rows);
+    if(r.error){setError(r.error.message);return;}
+    setToast('Balanced general study plan created.');
+    await refresh();
+  }
+
+  async function addQuickTask(input:{subjectId?:string;title:string;minutes:number;activityType:string}){
+    if(!supabase||!session?.user?.id||!input.title.trim())return;
+    const planId=await ensureTodayPlan();if(!planId)return;
+    const r=await supabase.from('daily_plan_items').insert({
+      daily_plan_id:planId,user_id:session.user.id,subject_id:input.subjectId||null,chapter_id:null,topic_id:null,
+      title:input.title.trim(),activity_type:input.activityType,estimated_minutes:Math.max(1,Math.min(720,input.minutes)),
+      priority_score:50,reason:['Added manually in General Study Mode'],status:'todo',sort_order:todaysPlan.length
+    });
+    if(r.error){setError(r.error.message);return;}
+    setToast('Study task added.');
+    await refresh();
+  }
+
+  async function addSubject(name:string){
+    if(!supabase||!session?.user?.id||!name.trim())return;
+    const clean=name.trim();
+    const color=SUBJECT_COLOR_POOL[workspace.subjects.length%SUBJECT_COLOR_POOL.length];
+    const r=await supabase.from('subjects').upsert({
+      user_id:session.user.id,name:clean,color,sort_order:workspace.subjects.length
+    },{onConflict:'user_id,name'});
+    if(r.error){setError(r.error.message);return;}
+    setToast(`${clean} added.`);
+    await refresh();
+  }
+
+  function beginFocus(item:Row,minutes?:number){
+    const target=Math.max(1,Number(minutes||item.estimated_minutes||workspace.profile?.preferred_focus_minutes||25));
+    setFocus({...item,estimated_minutes:target});
+    setFocusSeconds(0);
+    setFocusTargetSeconds(target*60);
+    setFocusRunning(true);
+  }
+
+  function resetFocus(){
+    setFocusSeconds(0);
+    setFocusRunning(false);
+  }
+
   async function setPlanStatus(item:Row,status:string){
     if(!supabase) return;
     const r=await supabase.from('daily_plan_items').update({status}).eq('id',item.id);
@@ -311,7 +439,7 @@ export default function ConnectedStudyOS() {
     });
     if(r.error){setError(r.error.message);return;}
     if(focus.id && focus.daily_plan_id) await supabase.from('daily_plan_items').update({status:'done'}).eq('id',focus.id);
-    setFocus(null); setFocusSeconds(0); setFocusRunning(false);
+    setFocus(null); setFocusSeconds(0); setFocusTargetSeconds(25*60); setFocusRunning(false);
     setToast(`${minutes} minute study session saved.`);
     await refresh();
   }
@@ -319,7 +447,7 @@ export default function ConnectedStudyOS() {
   function assistantAnswer(q:string){
     const text=q.toLowerCase();
     if(text.includes('next exam')||text.includes('exam')){
-      if(!nextExam)return 'You do not have a confirmed upcoming exam in StudyOS yet. Upload a date sheet or add an exam first.';
+      if(!nextExam)return 'You do not have an upcoming exam saved, and that is fine. General Study Mode still works with your subjects, focus timer, balanced plans, revision and study history.';
       return `${nextExam.name} is your next exam on ${formatDate(nextExam.exam_date)} (${daysUntil(nextExam.exam_date)} days left). I am using only the exam records stored in your workspace.`;
     }
     if(text.includes('revise')){
@@ -334,7 +462,8 @@ export default function ConnectedStudyOS() {
     if(studyNext){
       return `Your highest-value next action is “${studyNext.title || chapterMap.get(studyNext.chapter_id)?.title || 'Study session'}”. ${reasons(studyNext.reason).join(' ') || 'It is currently the highest-priority real item in your StudyOS data.'}`;
     }
-    return 'I do not have enough study evidence yet. Add your syllabus/date sheet or start a study session, and I will base recommendations on that data.';
+    if(text.includes('timer')||text.includes('focus')) return 'Open Focus from the sidebar to start a 15, 25, 40, 50 or 60 minute subject session. A date sheet is not required.';
+    return 'Start a focus session, add a subject, or build a balanced general plan. Exams and date sheets are optional and only add extra exam-aware intelligence.';
   }
 
   function askAssistant(){
@@ -372,13 +501,14 @@ export default function ConnectedStudyOS() {
 
       <div className="connected-content">
         {error&&<div className="error-banner"><span>{error}</span><button onClick={()=>setError('')}><X size={15}/></button></div>}
-        {view==='Home'&&<Home workspace={workspace} studyNext={studyNext} nextExam={nextExam} streak={streak} weekMinutes={weekMinutes} subjectMap={subjectMap} chapterMap={chapterMap} start={(item:Row)=>{setFocus(item);setFocusSeconds(0);setFocusRunning(true)}} upload={()=>fileRef.current?.click()}/>}
-        {view==='Today'&&<Today items={todaysPlan} subjectMap={subjectMap} chapterMap={chapterMap} setStatus={setPlanStatus} start={(item:Row)=>{setFocus(item);setFocusSeconds(0);setFocusRunning(true)}}/>}
-        {view==='Subjects'&&<Subjects workspace={workspace}/>}
+        {view==='Home'&&<Home workspace={workspace} studyNext={studyNext} nextExam={nextExam} streak={streak} weekMinutes={weekMinutes} subjectMap={subjectMap} chapterMap={chapterMap} start={beginFocus} upload={()=>fileRef.current?.click()} buildGeneralPlan={buildGeneralPlan}/>}
+        {view==='Today'&&<Today workspace={workspace} items={todaysPlan} subjectMap={subjectMap} chapterMap={chapterMap} setStatus={setPlanStatus} start={beginFocus} buildGeneralPlan={buildGeneralPlan} addTask={addQuickTask}/>}
+        {view==='Focus'&&<FocusHub workspace={workspace} subjectTime={subjectTime} start={beginFocus}/>}
+        {view==='Subjects'&&<Subjects workspace={workspace} onAdd={addSubject}/>}
         {view==='Library'&&<LibraryView workspace={workspace}/>}
         {view==='Syllabus'&&<Syllabus workspace={workspace} subjectMap={subjectMap} chapterMap={chapterMap} upload={()=>fileRef.current?.click()}/>}
         {view==='Exams'&&<Exams workspace={workspace} subjectMap={subjectMap}/>}
-        {view==='Revision'&&<Revision workspace={workspace} chapterMap={chapterMap} start={(item:Row)=>{setFocus(item);setFocusSeconds(0);setFocusRunning(true)}}/>}
+        {view==='Revision'&&<Revision workspace={workspace} chapterMap={chapterMap} start={beginFocus}/>} 
         {view==='Papers'&&<Papers workspace={workspace} subjectMap={subjectMap} generate={generatePaper}/>}
         {view==='Analytics'&&<Analytics workspace={workspace} subjectTime={subjectTime} weekMinutes={weekMinutes}/>}
         {view==='Documents'&&<Documents workspace={workspace} upload={()=>fileRef.current?.click()} confirm={confirmExtraction}/>}
@@ -389,13 +519,16 @@ export default function ConnectedStudyOS() {
     <button className="assistant-orb" onClick={()=>setAssistant(true)}><Sparkles size={18}/><span>Ask StudyOS</span></button>
     {toast&&<div className="connected-toast"><Check size={15}/>{toast}</div>}
 
-    {focus&&<div className="connected-overlay"><section className="focus-card">
+    {focus&&<div className="connected-overlay"><section className="focus-card focus-card-upgraded">
       <button className="close-button" onClick={()=>{setFocus(null);setFocusRunning(false)}}><X/></button>
-      <span className="focus-eyebrow">DEEP FOCUS</span>
+      <span className="focus-eyebrow">FOCUS TIMER · {String(focus.activity_type||focus.recommendation_type||'study').replaceAll('_',' ').toUpperCase()}</span>
       <h2>{focus.title || chapterMap.get(focus.chapter_id)?.title || 'Study session'}</h2>
-      <p>{subjectMap.get(focus.subject_id)?.name || 'Academic session'}</p>
-      <strong>{String(Math.floor(focusSeconds/60)).padStart(2,'0')}:{String(focusSeconds%60).padStart(2,'0')}</strong>
-      <div><button onClick={()=>setFocusRunning(v=>!v)}><Play size={16}/>{focusRunning?'Pause':'Resume'}</button><button className="secondary" onClick={finishFocus}><Check size={16}/>Finish & save</button></div>
+      <p>{subjectMap.get(focus.subject_id)?.name || 'General study'} · target {Math.round(focusTargetSeconds/60)} min</p>
+      <div className="focus-timer-ring" style={{'--focus-progress':Math.min(100,focusTargetSeconds?focusSeconds/focusTargetSeconds*100:0)+'%'} as React.CSSProperties}>
+        <strong>{String(Math.floor(Math.max(0,focusTargetSeconds-focusSeconds)/60)).padStart(2,'0')}:{String(Math.max(0,focusTargetSeconds-focusSeconds)%60).padStart(2,'0')}</strong>
+        <small>{Math.floor(focusSeconds/60)} min elapsed</small>
+      </div>
+      <div className="focus-controls"><button onClick={()=>setFocusRunning(v=>!v)}><Play size={16}/>{focusRunning?'Pause':'Resume'}</button><button className="secondary" onClick={resetFocus}><RotateCcw size={16}/>Reset</button><button className="secondary" onClick={finishFocus}><Check size={16}/>Finish & save</button></div>
     </section></div>}
 
     {assistant&&<aside className="connected-assistant">
