@@ -14,7 +14,7 @@ function buildBookmarklet(){
 
 export default function BookmarkCompanion(){
   const [copied,setCopied]=useState(false);
-  const bookmarklet=useMemo(buildBookmarklet,[]);
+  const bookmarklet=useMemo(()=>buildBookmarklet(),[]);
 
   async function copy(){
     await navigator.clipboard.writeText(bookmarklet);
