@@ -1,1 +1,5 @@
-import LandingPage from './landing-page';\n\nexport default function HomePage(){\n  return <LandingPage/>;\n}\n
+import LandingPage from './landing-page';
+
+export default function HomePage() {
+  return <LandingPage />;
+}
