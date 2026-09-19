@@ -403,7 +403,7 @@ export default function ConnectedStudyOS() {
     const r=await supabase.from('daily_plans').upsert({
       user_id:session.user.id,
       plan_date:today,
-      available_minutes:Math.min(1440,minutes*3),
+      available_minutes:Math.min(1440,minutes*subjectsPerDay),
       generated_reason:{mode:'general_study',exam_required:false},
       status:'active'
     },{onConflict:'user_id,plan_date'}).select('id').single();
@@ -416,21 +416,60 @@ export default function ConnectedStudyOS() {
     const planId=await ensureTodayPlan();if(!planId)return;
     const minutes=Number(workspace.profile?.preferred_focus_minutes||25);
     const existing=new Set(todaysPlan.filter((x:Row)=>x.subject_id).map((x:Row)=>x.subject_id));
+    const remainingSlots=Math.max(0,subjectsPerDay-existing.size);
+    if(!remainingSlots){setToast(`Today already covers ${subjectsPerDay} subjects.`);return;}
+
     const selected=[...workspace.subjects]
-      .sort((a,b)=>(recentMinutesBySubject.get(a.id)||0)-(recentMinutesBySubject.get(b.id)||0)||Number(a.sort_order||0)-Number(b.sort_order||0))
       .filter(s=>!existing.has(s.id))
-      .slice(0,Math.min(3,workspace.subjects.length));
-    if(!selected.length){setToast('Today already has balanced subject tasks.');return;}
-    const rows=selected.map((s,i)=>({
-      daily_plan_id:planId,user_id:session.user.id,subject_id:s.id,chapter_id:null,topic_id:null,
-      title:`Study ${s.name}`,activity_type:'learn',estimated_minutes:minutes,
-      priority_score:70-i*5,
-      reason:['General Study Mode','Balanced subject rotation','No exam or date sheet required'],
-      status:'todo',sort_order:todaysPlan.length+i
-    }));
+      .sort((a,b)=>{
+        const balance=(recentMinutesBySubject.get(a.id)||0)-(recentMinutesBySubject.get(b.id)||0);
+        if(balance!==0) return balance;
+        return stableNumber(today+'|'+a.id)-stableNumber(today+'|'+b.id);
+      })
+      .slice(0,Math.min(remainingSlots,workspace.subjects.length));
+
+    if(!selected.length){setToast('Today already has balanced subject coverage.');return;}
+
+    const rows=selected.map((s,i)=>{
+      const bookIds=new Set(workspace.books
+        .filter((b:Row)=>normalized(b.subject)===normalized(s.name))
+        .map((b:Row)=>b.id));
+      const candidates=workspace.chapters
+        .filter((ch:Row)=>bookIds.has(ch.curriculum_book_id))
+        .sort((a:Row,b:Row)=>{
+          const pa=workspace.progress.find((p:Row)=>p.chapter_id===a.id);
+          const pb=workspace.progress.find((p:Row)=>p.chapter_id===b.id);
+          const completionDiff=Number(pa?.completion||0)-Number(pb?.completion||0);
+          if(completionDiff!==0) return completionDiff;
+          const lastA=pa?.last_studied_at?new Date(pa.last_studied_at).getTime():0;
+          const lastB=pb?.last_studied_at?new Date(pb.last_studied_at).getTime():0;
+          if(lastA!==lastB) return lastA-lastB;
+          return stableNumber(today+'|'+a.id)-stableNumber(today+'|'+b.id);
+        });
+      const chapter=candidates[0]||null;
+      const topics=chapter?workspace.topics.filter((t:Row)=>t.chapter_id===chapter.id):[];
+      const topic=topics.length?topics[stableNumber(today+'|'+s.id+'|topic')%topics.length]:null;
+      const progress=chapter?workspace.progress.find((p:Row)=>p.chapter_id===chapter.id):null;
+      const activity=Number(progress?.completion||0)>=55?'practice':'learn';
+      const title=topic?.title || chapter?.title || `Study ${s.name}`;
+      return {
+        daily_plan_id:planId,user_id:session.user.id,subject_id:s.id,
+        chapter_id:chapter?.id||null,topic_id:topic?.id||null,
+        title,activity_type:activity,estimated_minutes:minutes,
+        priority_score:75-i*4,
+        reason:[
+          'Balanced Shuffle Plan',
+          'No exam or date sheet required',
+          `Daily coverage target: ${subjectsPerDay} subjects`,
+          topic?'A curriculum topic was selected for focused coverage':chapter?'An under-covered chapter was selected':'Subject rotation based on recent study time'
+        ],
+        status:'todo',sort_order:todaysPlan.length+i
+      };
+    });
+
     const r=await supabase.from('daily_plan_items').insert(rows);
     if(r.error){setError(r.error.message);return;}
-    setToast('Balanced general study plan created.');
+    setToast(`Balanced plan added ${rows.length} subject${rows.length===1?'':'s'} for today.`);
     await refresh();
   }
 
@@ -445,6 +484,134 @@ export default function ConnectedStudyOS() {
     if(r.error){setError(r.error.message);return;}
     setToast('Study task added.');
     await refresh();
+  }
+
+  async function saveVideoSummary(video:Row,summary:string){
+    if(!supabase||!session?.user?.id)return;
+    const trimmed=summary.trim();
+    await supabase.from('study_resources').delete()
+      .eq('user_id',session.user.id)
+      .contains('metadata',{kind:'video_summary',video_id:video.id});
+    if(!trimmed)return;
+    const r=await supabase.from('study_resources').insert({
+      user_id:session.user.id,
+      subject_id:video.subject_id||null,
+      chapter_id:video.chapter_id||null,
+      topic_id:video.topic_id||null,
+      title:`Summary · ${video.title}`,
+      resource_type:'note',
+      url:video.url||null,
+      source_label:providerLabel(video)+' learning summary',
+      metadata:{kind:'video_summary',video_id:video.id,summary:trimmed}
+    });
+    if(r.error) throw r.error;
+  }
+
+  async function addLearningVideo(input:{url:string;title:string;subjectId?:string;chapterId?:string;topicId?:string;durationMinutes?:number;completion?:number;watchedMinutes?:number;summary?:string}){
+    if(!supabase||!session?.user?.id)return;
+    let parsed:URL;
+    try{parsed=new URL(input.url.trim());}catch{setError('Enter a valid video or lesson URL.');return;}
+    if(!['http:','https:'].includes(parsed.protocol)){setError('Only http/https learning links are supported.');return;}
+    if(!input.title.trim()){setError('Add a title so StudyOS can identify this learning item.');return;}
+    const provider=providerForUrl(parsed.toString());
+    const durationSeconds=Math.max(0,Math.round(Number(input.durationMinutes||0)*60))||null;
+    const videoRes=await supabase.from('videos').upsert({
+      user_id:session.user.id,
+      subject_id:input.subjectId||null,
+      chapter_id:input.chapterId||null,
+      topic_id:input.topicId||null,
+      provider,
+      external_id:parsed.toString(),
+      title:input.title.trim(),
+      url:parsed.toString(),
+      duration_seconds:durationSeconds,
+      classification_confidence:1,
+      user_verified:true
+    },{onConflict:'user_id,provider,external_id'}).select('*').single();
+    if(videoRes.error||!videoRes.data){setError(videoRes.error?.message||'Could not save learning video.');return;}
+    const video=videoRes.data;
+    const completion=Math.max(0,Math.min(100,Number(input.completion||0)));
+    const watchedSeconds=Math.max(0,Math.round(Number(input.watchedMinutes||0)*60));
+    const existing=workspace.videoProgress.find((p:Row)=>p.video_id===video.id);
+    const progressRes=await supabase.from('video_progress').upsert({
+      user_id:session.user.id,
+      video_id:video.id,
+      watched_seconds:watchedSeconds,
+      completion,
+      last_position_seconds:watchedSeconds,
+      sessions:Number(existing?.sessions||0)+1,
+      last_watched_at:new Date().toISOString(),
+      updated_at:new Date().toISOString()
+    },{onConflict:'user_id,video_id'});
+    if(progressRes.error){setError(progressRes.error.message);return;}
+    try{await saveVideoSummary(video,input.summary||'');}catch(e:any){setError(e?.message||'Video saved, but the summary could not be saved.');return;}
+    setToast(`${providerLabel(video)} learning progress saved.`);
+    await refresh();
+  }
+
+  async function updateLearningProgress(video:Row,input:{completion:number;watchedMinutes:number;summary:string}){
+    if(!supabase||!session?.user?.id)return;
+    const existing=workspace.videoProgress.find((p:Row)=>p.video_id===video.id);
+    const watchedSeconds=Math.max(0,Math.round(Number(input.watchedMinutes||0)*60));
+    const r=await supabase.from('video_progress').upsert({
+      user_id:session.user.id,
+      video_id:video.id,
+      watched_seconds:watchedSeconds,
+      completion:Math.max(0,Math.min(100,Number(input.completion||0))),
+      last_position_seconds:watchedSeconds,
+      sessions:Number(existing?.sessions||0)+1,
+      confidence:existing?.confidence||null,
+      last_watched_at:new Date().toISOString(),
+      updated_at:new Date().toISOString()
+    },{onConflict:'user_id,video_id'});
+    if(r.error){setError(r.error.message);return;}
+    try{await saveVideoSummary(video,input.summary);}catch(e:any){setError(e?.message||'Progress saved, but the summary could not be saved.');return;}
+    setToast('Learning progress updated.');
+    await refresh();
+  }
+
+  async function saveProfileSettings(input:Row){
+    if(!supabase||!session?.user?.id)return;
+    const r=await supabase.from('profiles').update({
+      full_name:input.full_name,
+      class_level:Number(input.class_level),
+      board:input.board,
+      academic_session:input.academic_session,
+      school_name:input.school_name||null,
+      timezone:input.timezone||'Asia/Kolkata',
+      preferred_focus_minutes:Number(input.preferred_focus_minutes||25),
+      updated_at:new Date().toISOString()
+    }).eq('id',session.user.id);
+    if(r.error){setError(r.error.message);return;}
+    setToast('Profile settings saved.');
+    await refresh();
+  }
+
+  async function saveNotificationSettings(input:Row){
+    if(!supabase||!session?.user?.id)return;
+    const r=await supabase.from('notification_preferences').upsert({
+      user_id:session.user.id,
+      browser_enabled:Boolean(input.browser_enabled),
+      email_enabled:Boolean(input.email_enabled),
+      revision_enabled:Boolean(input.revision_enabled),
+      homework_enabled:Boolean(input.homework_enabled),
+      exam_enabled:Boolean(input.exam_enabled),
+      weekly_report_enabled:Boolean(input.weekly_report_enabled),
+      quiet_hours_start:input.quiet_hours_start||null,
+      quiet_hours_end:input.quiet_hours_end||null,
+      timezone:workspace.profile?.timezone||'Asia/Kolkata',
+      updated_at:new Date().toISOString()
+    },{onConflict:'user_id'});
+    if(r.error){setError(r.error.message);return;}
+    setToast('Notification preferences saved.');
+    await refresh();
+  }
+
+  async function sendPasswordReset(){
+    if(!supabase||!session?.user?.email)return;
+    const r=await supabase.auth.resetPasswordForEmail(session.user.email,{redirectTo:window.location.origin+'/auth'});
+    if(r.error){setError(r.error.message);return;}
+    setToast('Password reset email sent.');
   }
 
   async function addSubject(name:string){
@@ -510,6 +677,11 @@ export default function ConnectedStudyOS() {
       if(!dueRevision)return 'Nothing is currently in your due revision queue.';
       return `${chapterMap.get(dueRevision.chapter_id)?.title || 'A saved chapter'} is due for revision now. The current stage is R${dueRevision.stage ?? 1}.`;
     }
+    if(text.includes('video')||text.includes('youtube')||text.includes('physics wallah')||text.includes('pw ')){
+      const tracked=workspace.videos.length;
+      const completed=workspace.videoProgress.filter((p:Row)=>Number(p.completion)>=90).length;
+      return tracked?`You are tracking ${tracked} learning video${tracked===1?'':'s'} across StudyOS, with ${completed} at 90%+ completion. Open Learning to resume, update progress, or save summaries by topic.`:'You have not tracked any videos yet. Open Learning and add a YouTube, Physics Wallah, DIKSHA, Khan Academy, school, or other lesson URL.';
+    }
     if(text.includes('weak')){
       const weak=[...workspace.progress].sort((a,b)=>Number(a.mastery||0)-Number(b.mastery||0))[0];
       if(!weak)return 'There is not enough mastery evidence yet to name a weak chapter. Complete a study session or assessment first.';
@@ -544,7 +716,7 @@ export default function ConnectedStudyOS() {
       <nav>{nav.map(([label,Icon])=><button key={label} className={view===label?'active':''} onClick={()=>setView(label)}><Icon size={18}/><span>{label}</span>{label==='Revision'&&workspace.revisions.length>0?<i>{workspace.revisions.length}</i>:null}</button>)}</nav>
       <div className="sidebar-spacer"/>
       <button onClick={()=>setAssistant(true)}><Sparkles size={18}/><span>StudyOS Assistant</span></button>
-      <button><Settings size={18}/><span>Settings</span></button>
+      <button className={view==='Settings'?'active':''} onClick={()=>setView('Settings')}><Settings size={18}/><span>Settings</span></button>
       <div className="connected-profile"><span>{initials}</span><div><b>{workspace.profile.full_name}</b><small>Class {workspace.profile.class_level} · {workspace.profile.board}</small></div><button onClick={()=>supabase?.auth.signOut()} aria-label="Sign out"><LogOut size={16}/></button></div>
     </aside>
 
@@ -560,6 +732,7 @@ export default function ConnectedStudyOS() {
         {view==='Home'&&<Home workspace={workspace} studyNext={studyNext} nextExam={nextExam} streak={streak} weekMinutes={weekMinutes} subjectMap={subjectMap} chapterMap={chapterMap} start={beginFocus} upload={()=>fileRef.current?.click()} buildGeneralPlan={buildGeneralPlan}/>}
         {view==='Today'&&<Today workspace={workspace} items={todaysPlan} subjectMap={subjectMap} chapterMap={chapterMap} setStatus={setPlanStatus} start={beginFocus} buildGeneralPlan={buildGeneralPlan} addTask={addQuickTask}/>}
         {view==='Focus'&&<FocusHub workspace={workspace} subjectTime={subjectTime} start={beginFocus}/>}
+        {view==='Learning'&&<LearningTracker workspace={workspace} onAdd={addLearningVideo} onUpdate={updateLearningProgress}/>}
         {view==='Subjects'&&<Subjects workspace={workspace} onAdd={addSubject}/>}
         {view==='Library'&&<LibraryView workspace={workspace}/>}
         {view==='Syllabus'&&<Syllabus workspace={workspace} subjectMap={subjectMap} chapterMap={chapterMap} upload={()=>fileRef.current?.click()}/>}
@@ -569,6 +742,7 @@ export default function ConnectedStudyOS() {
         {view==='Analytics'&&<Analytics workspace={workspace} subjectTime={subjectTime} weekMinutes={weekMinutes}/>}
         {view==='Documents'&&<Documents workspace={workspace} upload={()=>fileRef.current?.click()} confirm={confirmExtraction}/>}
         {view==='Resources'&&<Resources workspace={workspace}/>}
+        {view==='Settings'&&<SettingsPanel workspace={workspace} email={session.user.email||''} dark={dark} setDark={setDark} subjectsPerDay={subjectsPerDay} setSubjectsPerDay={setSubjectsPerDay} saveProfile={saveProfileSettings} saveNotifications={saveNotificationSettings} sendPasswordReset={sendPasswordReset} signOut={()=>supabase?.auth.signOut()}/>}
       </div>
     </section>
 
