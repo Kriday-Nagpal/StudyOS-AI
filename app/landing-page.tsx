@@ -301,13 +301,13 @@ export default function LandingPage() {
 
           <div className="ml-5 hidden items-center gap-2 sm:flex">
             <Link
-              href="/app"
+              href="/auth?mode=signin"
               className="rounded-full px-4 py-2 text-xs text-white/70 transition hover:bg-white/5 hover:text-white"
             >
               Sign in
             </Link>
             <Link
-              href="/app"
+              href="/auth?mode=signup"
               className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white px-4 py-2 text-xs font-medium text-black transition hover:bg-violet-100"
             >
               Open StudyOS <ArrowRight className="size-3.5" />
@@ -338,7 +338,7 @@ export default function LandingPage() {
                 </a>
               ))}
               <Link
-                href="/app"
+                href="/auth?mode=signup"
                 className="mt-3 inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-xs font-medium text-black"
               >
                 Open StudyOS <ArrowRight className="size-3.5" />
@@ -380,7 +380,7 @@ export default function LandingPage() {
 
             <div className="mt-9 flex flex-wrap justify-center gap-3">
               <Link
-                href="/app"
+                href="/auth?mode=signup"
                 className="inline-flex min-h-11 items-center gap-2 rounded-full bg-white px-6 text-xs font-medium text-black transition hover:bg-violet-100"
               >
                 Initialize workspace <ArrowRight className="size-4" />
@@ -690,7 +690,7 @@ export default function LandingPage() {
             </p>
             <div className="mt-8">
               <Link
-                href="/app"
+                href="/auth?mode=signup"
                 className="inline-flex min-h-11 items-center gap-2 rounded-full bg-white px-7 text-xs font-medium text-black transition hover:bg-violet-100"
               >
                 Create my StudyOS <Zap className="size-4" />
