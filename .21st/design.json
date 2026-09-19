@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "project": {
+    "name": "studyos-ai",
+    "productType": null,
+    "stack": [
+      "nextjs",
+      "react",
+      "tailwind-v4",
+      "vite"
+    ]
+  },
+  "sources": {
+    "tokens": [
+      "app/globals.css"
+    ],
+    "components": [
+      "components/ui/particle-drift.tsx"
+    ],
+    "assets": [],
+    "instructions": []
+  },
+  "design": {
+    "colorMode": "light-and-dark",
+    "colors": {
+      "--muted": {
+        "value": "#aaa7b8",
+        "source": "app/globals.css"
+      }
+    },
+    "typography": {
+      "--text": {
+        "value": "#f1eff8",
+        "source": "app/globals.css"
+      }
+    },
+    "spacing": {},
+    "radius": {},
+    "shadows": {},
+    "motion": {},
+    "density": "unknown"
+  },
+  "components": {
+    "installed": [],
+    "preferredPrimitives": [],
+    "patterns": []
+  },
+  "constraints": {
+    "must": [
+      "Keep academic actions legible and fast across desktop and mobile",
+      "Respect prefers-reduced-motion for every ambient or interface animation",
+      "Preserve light and dark modes"
+    ],
+    "avoid": [
+      "Childish classroom styling",
+      "Dense enterprise ERP tables as the dominant dashboard language",
+      "Decorative motion that blocks or delays an action"
+    ]
+  },
+  "decisions": [
+    "Use a cinematic academic-intelligence dashboard with a compact dark priority hero over a soft neutral workspace",
+    "Use deep indigo, ultraviolet and cool blue accents with warm status colors",
+    "Use mixed-weight bento metrics, restrained depth and fine grid texture for premium hierarchy",
+    "Motion is functional: route transitions, command search, focus sessions, notifications and the AI assistant",
+    "Keep the visual density compact enough for daily study planning while preserving generous card spacing",
+    "Adapt the supplied particle-drift language as a native canvas layer in the StudyOS priority hero, with no external runtime scripts"
+  ],
+  "evidence": [
+    {
+      "fact": "design.colorMode:light-and-dark",
+      "source": "app/globals.css"
+    },
+    {
+      "fact": "design.tokens",
+      "source": "app/globals.css"
+    },
+    {
+      "fact": "project.stack:nextjs",
+      "source": "package.json"
+    },
+    {
+      "fact": "project.stack:react",
+      "source": "package.json"
+    },
+    {
+      "fact": "project.stack:tailwind-v4",
+      "source": "package.json"
+    },
+    {
+      "fact": "project.stack:vite",
+      "source": "package.json"
+    }
+  ],
+  "generatedAt": "2026-09-19T10:40:07.961Z"
+}
