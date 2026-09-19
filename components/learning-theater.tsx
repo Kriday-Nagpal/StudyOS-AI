@@ -3,13 +3,16 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft, BookOpen, Check, Clock3, ExternalLink, Loader2, Pause,
+  ArrowLeft, Check, Clock3, ExternalLink, Loader2, Pause,
   Play, RotateCcw, Sparkles, Target, Timer, Video
 } from 'lucide-react';
 import StudyOSLogo from '@/components/studyos-logo';
 import { getSupabaseClient } from '@/lib/supabase';
 
-type Row = Record<string, any>;
+type Row = Record<string, unknown>;
+type SessionShape={user:{id:string};access_token:string};
+type YTReadyEvent={target:YTPlayer};
+type YTStateEvent={data:number};
 type PlayerState = -1|0|1|2|3|5;
 type YTPlayer = {
   playVideo:()=>void;
@@ -78,7 +81,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
   const playerRef=useRef<YTPlayer|null>(null);
   const syncTimerRef=useRef<ReturnType<typeof setInterval>|null>(null);
   const titleRef=useRef(initialTitle);
-  const [session,setSession]=useState<any>(null);
+  const [session,setSession]=useState<SessionShape|null>(null);
   const [loading,setLoading]=useState(true);
   const [url,setUrl]=useState(initialUrl);
   const [title,setTitle]=useState(initialTitle);
@@ -87,7 +90,6 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
   const [chapters,setChapters]=useState<Row[]>([]);
   const [subjectId,setSubjectId]=useState('');
   const [chapterId,setChapterId]=useState('');
-  const [topicId,setTopicId]=useState('');
   const [notes,setNotes]=useState('');
   const [current,setCurrent]=useState(0);
   const [duration,setDuration]=useState(0);
@@ -193,14 +195,14 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
           origin:window.location.origin
         },
         events:{
-          onReady:async(event:any)=>{
+          onReady:async(event:YTReadyEvent)=>{
             if(disposed)return;
             const player=event.target as YTPlayer;
             const total=Number(player.getDuration()||0);
             setDuration(total);
             const canonical=canonicalYoutube(loadedUrl);
             const {data:video}=await supabase.from('videos').select('id,title').eq('user_id',session.user.id).eq('provider','youtube').eq('external_id',canonical).maybeSingle();
-            if(video?.title&&!title)setTitle(video.title);
+            if(video?.title&&!titleRef.current)setTitle(String(video.title));
             if(video?.id){
               const {data:progress}=await supabase.from('video_progress').select('*').eq('user_id',session.user.id).eq('video_id',video.id).maybeSingle();
               const resume=Number(progress?.last_position_seconds||0);
@@ -209,7 +211,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
               }
             }
           },
-          onStateChange:(event:any)=>{
+          onStateChange:(event:YTStateEvent)=>{
             if(disposed)return;
             const state=Number(event.data);
             setPlaying(state===1);
@@ -282,7 +284,6 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
       user_id:session.user.id,
       subject_id:subjectId||null,
       chapter_id:chapterId||null,
-      topic_id:topicId||null,
       provider,
       external_id:parsed.toString(),
       title:lessonTitle,
