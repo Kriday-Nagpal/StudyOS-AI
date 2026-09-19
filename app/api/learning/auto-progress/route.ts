@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { gatewayJson } from '@/lib/ai-gateway';
 import { requireUser } from '@/lib/server-supabase';
 
@@ -70,7 +71,7 @@ function clamp(value: unknown, min: number, max: number) {
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : min;
 }
 
-async function heuristicMapping(supabase: any, profile: Row | null, title: string) {
+async function heuristicMapping(supabase: any, profile: Row | null, title: string, userId: string) {
   const { data: subjects } = await supabase.from('subjects').select('*').order('sort_order');
   if (!subjects?.length) return { subject_id: null, chapter_id: null, topic_id: null, confidence: 0 };
 
@@ -174,7 +175,7 @@ async function heuristicMapping(supabase: any, profile: Row | null, title: strin
       }));
       const ai = await gatewayJson({
         feature: 'auto-learning-classification',
-        userId: 'companion-auto-map',
+        userId,
         prompt: [
           'Classify a learning-video title into the supplied curriculum candidates.',
           'Return only JSON with chapter_id and confidence between 0 and 1.',
@@ -245,7 +246,7 @@ export async function POST(request: Request) {
     };
 
     if (!mapping.subject_id || !mapping.chapter_id) {
-      const guessed = await heuristicMapping(supabase, profile || null, body.title);
+      const guessed = await heuristicMapping(supabase, profile || null, body.title, user.id);
       mapping = {
         subject_id: mapping.subject_id || guessed.subject_id,
         chapter_id: mapping.chapter_id || guessed.chapter_id,
