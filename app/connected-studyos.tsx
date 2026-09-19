@@ -28,12 +28,14 @@ type Workspace = {
   documents: Row[];
   papers: Row[];
   resources: Row[];
+  extractions: Row[];
+  blueprints: Row[];
 };
 
 const emptyWorkspace: Workspace = {
   profile:null, subjects:[], books:[], chapters:[], exams:[], syllabus:[], progress:[],
   revisions:[], recommendations:[], plans:[], planItems:[], sessions:[], documents:[],
-  papers:[], resources:[]
+  papers:[], resources:[], extractions:[], blueprints:[]
 };
 
 const nav: Array<[View, any]> = [
@@ -72,7 +74,7 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
 
   const [
     subjectsRes, examsRes, syllabusRes, progressRes, revisionsRes, recommendationsRes,
-    plansRes, planItemsRes, sessionsRes, documentsRes, papersRes, resourcesRes
+    plansRes, planItemsRes, sessionsRes, documentsRes, papersRes, resourcesRes, extractionsRes, blueprintsRes
   ] = await Promise.all([
     supabase.from('subjects').select('*').order('sort_order'),
     supabase.from('exams').select('*').order('exam_date'),
@@ -86,6 +88,8 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
     supabase.from('documents').select('*').order('created_at',{ascending:false}).limit(100),
     supabase.from('question_papers').select('*').order('created_at',{ascending:false}).limit(100),
     supabase.from('study_resources').select('*').order('created_at',{ascending:false}).limit(100),
+    supabase.from('document_extractions').select('*').order('created_at',{ascending:false}).limit(100),
+    supabase.from('exam_blueprints').select('*').order('created_at',{ascending:false}).limit(100),
   ]);
 
   let books: Row[] = [];
@@ -118,6 +122,8 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
     documents: documentsRes.data ?? [],
     papers: papersRes.data ?? [],
     resources: resourcesRes.data ?? [],
+    extractions: extractionsRes.data ?? [],
+    blueprints: blueprintsRes.data ?? [],
   };
 }
 
@@ -218,6 +224,21 @@ export default function ConnectedStudyOS() {
     return [...data.entries()].sort((a,b)=>b[1]-a[1]);
   },[workspace.sessions,subjectMap]);
 
+  async function authFetch(path: string, init: RequestInit = {}) {
+    if (!supabase) throw new Error('Supabase is unavailable');
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) throw new Error('Your session expired. Sign in again.');
+    return fetch(path, {
+      ...init,
+      headers: {
+        'Content-Type':'application/json',
+        Authorization:'Bearer ' + token,
+        ...(init.headers || {}),
+      },
+    });
+  }
+
   async function uploadDocument(file: File) {
     if (!supabase || !session?.user?.id) return;
     const path = `${session.user.id}/${crypto.randomUUID()}-${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`;
@@ -229,9 +250,40 @@ export default function ConnectedStudyOS() {
     const ins = await supabase.from('documents').insert({
       user_id:session.user.id,file_name:file.name,storage_path:path,kind,
       processing_status:'uploaded',mime_type:file.type||null,size_bytes:file.size
+    }).select('id').single();
+    if (ins.error || !ins.data) { setError(ins.error?.message || 'Could not save document'); return; }
+    setToast('Reading document with StudyOS AI…');
+    const response = await authFetch('/api/documents/extract',{
+      method:'POST',
+      body:JSON.stringify({documentId:ins.data.id}),
     });
-    if (ins.error) { setError(ins.error.message); return; }
-    setToast('Uploaded securely. It is ready for extraction.');
+    const payload = await response.json();
+    if (!response.ok) { setError(payload.error || 'Document extraction failed'); await refresh(); return; }
+    setToast('Extraction ready for review.');
+    await refresh();
+  }
+
+  async function confirmExtraction(extractionId:string, examId?:string) {
+    setToast('Confirming extracted academic data…');
+    const response = await authFetch('/api/documents/confirm',{
+      method:'POST',
+      body:JSON.stringify({extractionId,examId}),
+    });
+    const payload = await response.json();
+    if(!response.ok){setError(payload.error || 'Could not confirm extraction');return;}
+    setToast('Academic data confirmed and connected.');
+    await refresh();
+  }
+
+  async function generatePaper(examId:string, subjectId?:string) {
+    setToast('Generating and validating practice paper…');
+    const response = await authFetch('/api/papers/generate',{
+      method:'POST',
+      body:JSON.stringify({examId,subjectId}),
+    });
+    const payload = await response.json();
+    if(!response.ok){setError(payload.error || 'Paper generation failed');return;}
+    setToast('Practice paper generated and validated.');
     await refresh();
   }
 
@@ -326,9 +378,9 @@ export default function ConnectedStudyOS() {
         {view==='Syllabus'&&<Syllabus workspace={workspace} subjectMap={subjectMap} chapterMap={chapterMap} upload={()=>fileRef.current?.click()}/>}
         {view==='Exams'&&<Exams workspace={workspace} subjectMap={subjectMap}/>}
         {view==='Revision'&&<Revision workspace={workspace} chapterMap={chapterMap} start={(item)=>{setFocus(item);setFocusSeconds(0);setFocusRunning(true)}}/>}
-        {view==='Papers'&&<Papers workspace={workspace}/>}
+        {view==='Papers'&&<Papers workspace={workspace} subjectMap={subjectMap} generate={generatePaper}/>}
         {view==='Analytics'&&<Analytics workspace={workspace} subjectTime={subjectTime} weekMinutes={weekMinutes}/>}
-        {view==='Documents'&&<Documents workspace={workspace} upload={()=>fileRef.current?.click()}/>}
+        {view==='Documents'&&<Documents workspace={workspace} upload={()=>fileRef.current?.click()} confirm={confirmExtraction}/>}
         {view==='Resources'&&<Resources workspace={workspace}/>}
       </div>
     </section>
@@ -433,10 +485,10 @@ function Exams({workspace,subjectMap}:{workspace:Workspace;subjectMap:Map<any,an
 
 function Revision({workspace,chapterMap,start}:any){return <><SectionHead eyebrow="SPACED REVISION" title="Revision queue" copy="Due items come directly from your revision schedule."/><div className="revision-real-grid">{workspace.revisions.map((r:Row)=><section className="connected-card revision-real" key={r.id}><span>R{r.stage || 1}</span><h3>{chapterMap.get(r.chapter_id)?.title || 'Revision item'}</h3><p>Due {formatDate(r.due_at)} · interval {r.interval_days || 0} days</p><button onClick={()=>start({title:chapterMap.get(r.chapter_id)?.title || 'Revision',subject_id:r.subject_id,chapter_id:r.chapter_id,estimated_minutes:10,reason:['Revision due']})}><Play size={15}/>Start revision</button></section>)}</div>{!workspace.revisions.length&&<Empty icon={Brain} title="Nothing due right now" copy="Revision items will appear after StudyOS schedules them from completed learning and assessment evidence."/>}</>}
 
-function Papers({workspace}:{workspace:Workspace}){return <><SectionHead eyebrow="QUESTION PAPER STUDIO" title="Practice papers" copy="Generated paper records stay tied to real exams, syllabus items, blueprints, and source references."/><div className="paper-grid">{workspace.papers.map(p=><section className="connected-card paper-card" key={p.id}><FileText/><div><span>{p.status}</span><h3>{p.title}</h3><p>{p.total_marks?Math.round(Number(p.total_marks))+' marks':'Marks not set'}{p.duration_minutes?' · '+p.duration_minutes+' min':''}</p></div><ChevronRight/></section>)}</div>{!workspace.papers.length&&<Empty icon={FileText} title="No papers generated yet" copy="Question Paper Studio becomes available after a confirmed syllabus and blueprint exist. StudyOS will not invent an exam pattern when those sources are missing."/>}</>}
+function Papers({workspace,subjectMap,generate}:{workspace:Workspace;subjectMap:Map<any,any>;generate:(examId:string,subjectId?:string)=>Promise<void>}){return <><SectionHead eyebrow="QUESTION PAPER STUDIO" title="Practice papers" copy="Papers are generated only from confirmed syllabus + blueprint records, then validated before saving."/><div className="paper-generate-grid">{workspace.exams.map(exam=>{const hasBlueprint=workspace.blueprints.some(b=>b.exam_id===exam.id&&b.status==='confirmed');const hasSyllabus=workspace.syllabus.some(s=>s.exam_id===exam.id&&s.user_verified&&s.inclusion!=='excluded');return <section className="connected-card paper-generator" key={exam.id}><div><span>{subjectMap.get(exam.subject_id)?.name || 'Exam'}</span><h3>{exam.name}</h3><p>{hasSyllabus?'Syllabus confirmed':'Syllabus needed'} · {hasBlueprint?'Blueprint confirmed':'Blueprint needed'}</p></div><button disabled={!hasBlueprint||!hasSyllabus||!exam.subject_id} onClick={()=>generate(exam.id,exam.subject_id)}><Sparkles size={14}/>Generate paper</button></section>})}</div><div className="paper-grid">{workspace.papers.map(p=><section className="connected-card paper-card" key={p.id}><FileText/><div><span>{p.status}</span><h3>{p.title}</h3><p>{p.total_marks?Math.round(Number(p.total_marks))+' marks':'Marks not set'}{p.duration_minutes?' · '+p.duration_minutes+' min':''}</p></div><ChevronRight/></section>)}</div>{!workspace.exams.length&&<Empty icon={FileText} title="No exam context yet" copy="Upload and confirm your date sheet, syllabus, and blueprint first. StudyOS will not invent a paper pattern."/>}</>}
 
 function Analytics({workspace,subjectTime,weekMinutes}:{workspace:Workspace;subjectTime:Array<[string,number]>;weekMinutes:number}){const max=Math.max(...subjectTime.map(x=>x[1]),1);return <><SectionHead eyebrow="REAL ANALYTICS" title="Your progress" copy="Every chart is computed from saved sessions and progress rows; insufficient data stays visibly empty."/><div className="analytics-real-grid"><section className="connected-card"><header><span>LAST 7 DAYS</span><h3>Study time</h3></header><div className="big-number">{weekMinutes}<small> min</small></div><p className="muted">From {workspace.sessions.filter(s=>Number(s.duration_minutes)>0).length} saved sessions.</p></section><section className="connected-card"><header><span>SUBJECT BALANCE</span><h3>Where your time went</h3></header>{subjectTime.length?subjectTime.map(([name,min])=><div className="balance-real" key={name}><span>{name}</span><div><i style={{width:(min/max*100)+'%'}}/></div><b>{min}m</b></div>):<p className="muted">Not enough session data yet.</p>}</section><section className="connected-card analytics-wide"><header><span>MASTERY EVIDENCE</span><h3>Tracked chapters</h3></header>{workspace.progress.length?<div className="progress-grid">{workspace.progress.slice(0,12).map(p=><div key={p.id}><span>{pct(p.mastery)}%</span><div><i style={{height:pct(p.mastery)+'%'}}/></div><small>{pct(p.completion)}% done</small></div>)}</div>:<p className="muted">No chapter mastery evidence yet.</p>}</section></div></>}
 
-function Documents({workspace,upload}:{workspace:Workspace;upload:()=>void}){return <><SectionHead eyebrow="ACADEMIC DOCUMENTS" title="Document center" copy="Files are stored privately in your Supabase bucket. Low-confidence extraction can remain in review instead of silently changing plans." action={<button className="premium-button" onClick={upload}><Upload size={16}/>Upload document</button>}/><button className="drop-zone-real" onClick={upload}><Upload/><b>Upload syllabus, date sheet, blueprint, previous paper, worksheet, or notes</b><span>PDF, JPG, PNG · private storage</span></button>{workspace.documents.length?<section className="connected-card data-table documents-real"><header><span>File</span><span>Kind</span><span>Status</span><span>Added</span></header>{workspace.documents.map(d=><article key={d.id}><div><b>{d.file_name}</b><small>{d.mime_type || 'document'}</small></div><span>{d.kind}</span><span>{d.processing_status}</span><b>{formatDate(d.created_at)}</b></article>)}</section>:null}</>}
+function Documents({workspace,upload,confirm}:{workspace:Workspace;upload:()=>void;confirm:(extractionId:string,examId?:string)=>Promise<void>}){const [examChoice,setExamChoice]=useState<Record<string,string>>({});return <><SectionHead eyebrow="ACADEMIC DOCUMENTS" title="Document center" copy="Upload → AI extraction → review → confirm. Nothing changes your plan before approval." action={<button className="premium-button" onClick={upload}><Upload size={16}/>Upload document</button>}/><button className="drop-zone-real" onClick={upload}><Upload/><b>Upload syllabus, date sheet, blueprint, previous paper, worksheet, or notes</b><span>PDF, JPG, PNG · private storage · AI review-first extraction</span></button>{workspace.extractions.filter(x=>x.status==='needs_confirmation').map(ex=>{const needsExam=ex.extraction_type==='syllabus'||ex.extraction_type==='blueprint';const payload=(ex.payload||{}) as Row;return <section className="connected-card extraction-review" key={ex.id}><div><span>READY TO REVIEW · {Math.round(Number(ex.confidence||0)*100)}% confidence</span><h3>{String(ex.extraction_type).replaceAll('_',' ')}</h3><p>{payload.summary || 'Review the extracted structure before it changes StudyOS.'}</p></div>{needsExam?<select value={examChoice[ex.id]||''} onChange={e=>setExamChoice(v=>({...v,[ex.id]:e.target.value}))}><option value="">Choose target exam…</option>{workspace.exams.map(e=><option key={e.id} value={e.id}>{e.name} · {formatDate(e.exam_date)}</option>)}</select>:null}<button disabled={needsExam&&!examChoice[ex.id]} onClick={()=>confirm(ex.id,examChoice[ex.id]||undefined)}><Check size={14}/>Confirm extraction</button></section>})}{workspace.documents.length?<section className="connected-card data-table documents-real"><header><span>File</span><span>Kind</span><span>Status</span><span>Added</span></header>{workspace.documents.map(d=><article key={d.id}><div><b>{d.file_name}</b><small>{d.mime_type || 'document'}</small></div><span>{d.kind}</span><span>{d.processing_status}</span><b>{formatDate(d.created_at)}</b></article>)}</section>:null}</>}
 
 function Resources({workspace}:{workspace:Workspace}){return <><SectionHead eyebrow="LEARNING LIBRARY" title="Resources" copy="Your own notes, videos, worksheets, websites, and papers can be linked to real subjects, chapters, and topics."/><div className="resource-real-grid">{workspace.resources.map(r=><section className="connected-card resource-real" key={r.id}><span><Library/></span><div><small>{r.resource_type}</small><h3>{r.title}</h3><p>{r.source_label || 'Personal resource'}</p>{r.url?<a href={r.url} target="_blank" rel="noreferrer">Open resource</a>:null}</div></section>)}</div>{!workspace.resources.length&&<Empty icon={Library} title="No resources saved" copy="Add your own study material and StudyOS will keep it tied to the correct academic context."/>}</>}
