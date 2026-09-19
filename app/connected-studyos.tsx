@@ -5,12 +5,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3, Bell, BookOpen, Brain, CalendarDays, Check, ChevronRight, Clock3,
   FileText, Flame, FolderOpen, Library, ListPlus, Loader2, LogOut, Menu, Moon, Play,
-  Plus, RefreshCw, RotateCcw, Search, Send, Settings, Sparkles, Sun, Target, Timer, Upload, X,
+  Plus, RefreshCw, RotateCcw, Search, Send, Settings, Sparkles, Sun, Target, Timer, Upload, Video, X,
 } from 'lucide-react';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 import StudyOSAuth from '@/components/auth/studyos-auth';
 
-type View = 'Home'|'Today'|'Focus'|'Subjects'|'Library'|'Syllabus'|'Exams'|'Revision'|'Papers'|'Analytics'|'Documents'|'Resources';
+type View = 'Home'|'Today'|'Focus'|'Learning'|'Subjects'|'Library'|'Syllabus'|'Exams'|'Revision'|'Papers'|'Analytics'|'Documents'|'Resources'|'Settings';
 type Row = Record<string, any>;
 
 type Workspace = {
@@ -18,6 +18,10 @@ type Workspace = {
   subjects: Row[];
   books: Row[];
   chapters: Row[];
+  topics: Row[];
+  videos: Row[];
+  videoProgress: Row[];
+  notificationPreferences: Row | null;
   exams: Row[];
   syllabus: Row[];
   progress: Row[];
@@ -34,13 +38,13 @@ type Workspace = {
 };
 
 const emptyWorkspace: Workspace = {
-  profile:null, subjects:[], books:[], chapters:[], exams:[], syllabus:[], progress:[],
+  profile:null, subjects:[], books:[], chapters:[], topics:[], videos:[], videoProgress:[], notificationPreferences:null, exams:[], syllabus:[], progress:[],
   revisions:[], recommendations:[], plans:[], planItems:[], sessions:[], documents:[],
   papers:[], resources:[], extractions:[], blueprints:[]
 };
 
 const nav: Array<[View, any]> = [
-  ['Home',Sparkles],['Today',CalendarDays],['Focus',Timer],['Subjects',BookOpen],['Library',Library],
+  ['Home',Sparkles],['Today',CalendarDays],['Focus',Timer],['Learning',Video],['Subjects',BookOpen],['Library',Library],
   ['Syllabus',Target],['Exams',FileText],['Revision',Brain],['Papers',FolderOpen],
   ['Analytics',BarChart3],['Documents',Upload],['Resources',Library],
 ];
@@ -77,6 +81,33 @@ function reasons(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : [];
 }
 
+function normalized(value: unknown) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g,' ');
+}
+function stableNumber(value: string) {
+  let hash=2166136261;
+  for(let i=0;i<value.length;i++){hash^=value.charCodeAt(i);hash=Math.imul(hash,16777619);}
+  return Math.abs(hash>>>0);
+}
+function providerForUrl(value: string) {
+  try {
+    const host=new URL(value).hostname.toLowerCase();
+    if(host.includes('youtube.com')||host==='youtu.be') return 'youtube';
+    if(host.includes('diksha.gov.in')) return 'diksha';
+    if(host.includes('khanacademy.org')) return 'khan_academy';
+    return 'other';
+  } catch { return 'other'; }
+}
+function providerLabel(video: Row) {
+  const url=String(video?.url||'').toLowerCase();
+  if(video?.provider==='youtube'||url.includes('youtube.com')||url.includes('youtu.be')) return 'YouTube';
+  if(url.includes('pw.live')||url.includes('physicswallah')||url.includes('pwskills')) return 'Physics Wallah';
+  if(video?.provider==='diksha'||url.includes('diksha.gov.in')) return 'DIKSHA';
+  if(video?.provider==='khan_academy'||url.includes('khanacademy.org')) return 'Khan Academy';
+  if(video?.provider==='school') return 'School';
+  return 'Other';
+}
+
 async function loadWorkspace(userId: string): Promise<Workspace> {
   const supabase = getSupabaseClient();
   if (!supabase) return emptyWorkspace;
@@ -86,7 +117,8 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
 
   const [
     subjectsRes, examsRes, syllabusRes, progressRes, revisionsRes, recommendationsRes,
-    plansRes, planItemsRes, sessionsRes, documentsRes, papersRes, resourcesRes, extractionsRes, blueprintsRes
+    plansRes, planItemsRes, sessionsRes, documentsRes, papersRes, resourcesRes, extractionsRes, blueprintsRes,
+    videosRes, videoProgressRes, notificationPreferencesRes
   ] = await Promise.all([
     supabase.from('subjects').select('*').order('sort_order'),
     supabase.from('exams').select('*').order('exam_date'),
@@ -102,6 +134,9 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
     supabase.from('study_resources').select('*').order('created_at',{ascending:false}).limit(100),
     supabase.from('document_extractions').select('*').order('created_at',{ascending:false}).limit(100),
     supabase.from('exam_blueprints').select('*').order('created_at',{ascending:false}).limit(100),
+    supabase.from('videos').select('*').order('created_at',{ascending:false}).limit(250),
+    supabase.from('video_progress').select('*').order('updated_at',{ascending:false}).limit(250),
+    supabase.from('notification_preferences').select('*').eq('user_id',userId).maybeSingle(),
   ]);
 
   let subjects: Row[] = subjectsRes.data ?? [];
@@ -120,6 +155,7 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
 
   let books: Row[] = [];
   let chapters: Row[] = [];
+  let topics: Row[] = [];
   if (profile?.class_level && profile?.board) {
     const b = await supabase.from('curriculum_books').select('*')
       .eq('class_level',profile.class_level).eq('board',profile.board)
@@ -129,6 +165,11 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
       const c = await supabase.from('curriculum_chapters').select('*')
         .in('curriculum_book_id',books.map((x:any)=>x.id)).order('sort_order');
       chapters = c.data ?? [];
+      if (chapters.length) {
+        const t = await supabase.from('curriculum_topics').select('*')
+          .in('chapter_id',chapters.map((x:any)=>x.id)).order('sort_order');
+        topics = t.data ?? [];
+      }
     }
   }
 
@@ -137,6 +178,10 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
     subjects,
     books,
     chapters,
+    topics,
+    videos: videosRes.data ?? [],
+    videoProgress: videoProgressRes.data ?? [],
+    notificationPreferences: notificationPreferencesRes.data ?? null,
     exams: examsRes.data ?? [],
     syllabus: syllabusRes.data ?? [],
     progress: progressRes.data ?? [],
@@ -160,6 +205,7 @@ export default function ConnectedStudyOS() {
   const [loading,setLoading] = useState(true);
   const [view,setView] = useState<View>('Home');
   const [dark,setDark] = useState(false);
+  const [subjectsPerDay,setSubjectsPerDay] = useState(4);
   const [error,setError] = useState('');
   const [toast,setToast] = useState('');
   const [assistant,setAssistant] = useState(false);
@@ -188,6 +234,16 @@ export default function ConnectedStudyOS() {
   },[supabase]);
 
   useEffect(()=>{ if (session?.user?.id) refresh(); else setWorkspace(emptyWorkspace); },[session?.user?.id,refresh]);
+
+  useEffect(()=>{
+    const theme=window.localStorage.getItem('studyos-theme');
+    const count=Number(window.localStorage.getItem('studyos-subjects-per-day')||4);
+    setDark(theme==='dark');
+    setSubjectsPerDay(Number.isFinite(count)?Math.max(2,Math.min(6,count)):4);
+  },[]);
+
+  useEffect(()=>{window.localStorage.setItem('studyos-theme',dark?'dark':'light')},[dark]);
+  useEffect(()=>{window.localStorage.setItem('studyos-subjects-per-day',String(subjectsPerDay))},[subjectsPerDay]);
 
   useEffect(()=>{
     if (!focusRunning) return;
