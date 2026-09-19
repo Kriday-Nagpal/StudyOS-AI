@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { requireUser } from '@/lib/server-supabase';
 
 type Dict = Record<string, unknown>;
@@ -15,7 +16,7 @@ function asNumber(value: unknown) {
   return Number.isFinite(n) ? n : null;
 }
 
-async function subjectIdFor(supabase: ReturnType<typeof import('@supabase/supabase-js').createClient>, userId: string, name: string) {
+async function subjectIdFor(supabase: SupabaseClient, userId: string, name: string) {
   if (!name) return null;
   const { data } = await supabase
     .from('subjects')
