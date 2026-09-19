@@ -22,6 +22,9 @@ type Workspace = {
   videos: Row[];
   videoProgress: Row[];
   notificationPreferences: Row | null;
+  flashcards: Row[];
+  flashcardReviews: Row[];
+  doubts: Row[];
   exams: Row[];
   syllabus: Row[];
   progress: Row[];
@@ -38,7 +41,7 @@ type Workspace = {
 };
 
 const emptyWorkspace: Workspace = {
-  profile:null, subjects:[], books:[], chapters:[], topics:[], videos:[], videoProgress:[], notificationPreferences:null, exams:[], syllabus:[], progress:[],
+  profile:null, subjects:[], books:[], chapters:[], topics:[], videos:[], videoProgress:[], notificationPreferences:null, flashcards:[], flashcardReviews:[], doubts:[], exams:[], syllabus:[], progress:[],
   revisions:[], recommendations:[], plans:[], planItems:[], sessions:[], documents:[],
   papers:[], resources:[], extractions:[], blueprints:[]
 };
@@ -118,7 +121,7 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
   const [
     subjectsRes, examsRes, syllabusRes, progressRes, revisionsRes, recommendationsRes,
     plansRes, planItemsRes, sessionsRes, documentsRes, papersRes, resourcesRes, extractionsRes, blueprintsRes,
-    videosRes, videoProgressRes, notificationPreferencesRes
+    videosRes, videoProgressRes, notificationPreferencesRes, flashcardsRes, flashcardReviewsRes, doubtsRes
   ] = await Promise.all([
     supabase.from('subjects').select('*').order('sort_order'),
     supabase.from('exams').select('*').order('exam_date'),
@@ -137,6 +140,9 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
     supabase.from('videos').select('*').order('created_at',{ascending:false}).limit(250),
     supabase.from('video_progress').select('*').order('updated_at',{ascending:false}).limit(250),
     supabase.from('notification_preferences').select('*').eq('user_id',userId).maybeSingle(),
+    supabase.from('flashcards').select('*').order('created_at',{ascending:false}).limit(500),
+    supabase.from('flashcard_reviews').select('*').order('reviewed_at',{ascending:false}).limit(1000),
+    supabase.from('doubts').select('*').eq('status','unresolved').order('created_at',{ascending:false}).limit(250),
   ]);
 
   let subjects: Row[] = subjectsRes.data ?? [];
@@ -182,6 +188,9 @@ async function loadWorkspace(userId: string): Promise<Workspace> {
     videos: videosRes.data ?? [],
     videoProgress: videoProgressRes.data ?? [],
     notificationPreferences: notificationPreferencesRes.data ?? null,
+    flashcards: flashcardsRes.data ?? [],
+    flashcardReviews: flashcardReviewsRes.data ?? [],
+    doubts: doubtsRes.data ?? [],
     exams: examsRes.data ?? [],
     syllabus: syllabusRes.data ?? [],
     progress: progressRes.data ?? [],
@@ -243,6 +252,12 @@ export default function ConnectedStudyOS() {
   },[]);
 
   useEffect(()=>{window.localStorage.setItem('studyos-theme',dark?'dark':'light')},[dark]);
+
+  useEffect(()=>{
+    const requested=new URL(window.location.href).searchParams.get('view') as View | null;
+    const allowed=new Set<View>([...nav.map(([label])=>label),'Settings']);
+    if(requested&&allowed.has(requested))setView(requested);
+  },[]);
   useEffect(()=>{window.localStorage.setItem('studyos-subjects-per-day',String(subjectsPerDay))},[subjectsPerDay]);
 
   useEffect(()=>{
@@ -431,6 +446,44 @@ export default function ConnectedStudyOS() {
     if(!selected.length){setToast('Today already has balanced subject coverage.');return;}
 
     const rows=selected.map((s,i)=>{
+      const unfinishedVideos=workspace.videos
+        .filter((v:Row)=>v.subject_id===s.id)
+        .map((v:Row)=>({video:v,progress:workspace.videoProgress.find((p:Row)=>p.video_id===v.id)}))
+        .filter((x:Row)=>Number(x.progress?.completion||0)<90)
+        .sort((a:Row,b:Row)=>Number(b.progress?.completion||0)-Number(a.progress?.completion||0));
+
+      const subjectCards=workspace.flashcards.filter((card:Row)=>card.subject_id===s.id);
+      const dueCards=subjectCards.filter((card:Row)=>{
+        const review=workspace.flashcardReviews.find((r:Row)=>r.flashcard_id===card.id);
+        return !review?.next_due_at || new Date(review.next_due_at).getTime()<=Date.now();
+      });
+
+      if(unfinishedVideos.length && stableNumber(today+'|'+s.id+'|learning')%3!==0){
+        const learning=unfinishedVideos[0];
+        const completion=Number(learning.progress?.completion||0);
+        return {
+          daily_plan_id:planId,user_id:session.user.id,subject_id:s.id,
+          chapter_id:learning.video.chapter_id||null,topic_id:learning.video.topic_id||null,
+          title:`Continue: ${learning.video.title}`,activity_type:'video',
+          estimated_minutes:Math.min(minutes,Math.max(10,Math.round(Number(learning.video.duration_seconds||1200)/60*(1-completion/100)))),
+          priority_score:82-i*4,
+          reason:['Connected Learning','Tracked lesson is unfinished',`${Math.round(completion)}% complete`],
+          status:'todo',sort_order:todaysPlan.length+i
+        };
+      }
+
+      if(dueCards.length && stableNumber(today+'|'+s.id+'|flashcards')%2===0){
+        return {
+          daily_plan_id:planId,user_id:session.user.id,subject_id:s.id,
+          chapter_id:dueCards[0]?.chapter_id||null,topic_id:dueCards[0]?.topic_id||null,
+          title:`Review ${Math.min(dueCards.length,8)} flashcards · ${s.name}`,activity_type:'flashcards',
+          estimated_minutes:Math.min(15,minutes),
+          priority_score:78-i*4,
+          reason:['Learning Companion','Flashcards are due for review'],
+          status:'todo',sort_order:todaysPlan.length+i
+        };
+      }
+
       const bookIds=new Set(workspace.books
         .filter((b:Row)=>normalized(b.subject)===normalized(s.name))
         .map((b:Row)=>b.id));
@@ -614,6 +667,23 @@ export default function ConnectedStudyOS() {
     setToast('Password reset email sent.');
   }
 
+  async function generateLearningKit(video:Row,notes:string){
+    if(!supabase)return;
+    const {data}=await supabase.auth.getSession();
+    const token=data.session?.access_token;
+    if(!token){setError('Your session expired. Sign in again.');return;}
+    setToast('Building your study kit…');
+    const response=await fetch('/api/learning/analyze',{
+      method:'POST',
+      headers:{'Content-Type':'application/json',Authorization:'Bearer '+token},
+      body:JSON.stringify({videoId:video.id,notes})
+    });
+    const payload=await response.json() as {error?:string;ai_used?:boolean;flashcards_created?:number;doubts_created?:number};
+    if(!response.ok){setError(payload.error||'Could not build the study kit.');return;}
+    setToast(`${payload.ai_used?'AI':'Quick'} study kit ready · ${payload.flashcards_created||0} flashcards${payload.doubts_created?' · '+payload.doubts_created+' doubts':''}`);
+    await refresh();
+  }
+
   async function addSubject(name:string){
     if(!supabase||!session?.user?.id||!name.trim())return;
     const clean=name.trim();
@@ -732,7 +802,7 @@ export default function ConnectedStudyOS() {
         {view==='Home'&&<Home workspace={workspace} studyNext={studyNext} nextExam={nextExam} streak={streak} weekMinutes={weekMinutes} subjectMap={subjectMap} chapterMap={chapterMap} start={beginFocus} upload={()=>fileRef.current?.click()} buildGeneralPlan={buildGeneralPlan}/>}
         {view==='Today'&&<Today workspace={workspace} items={todaysPlan} subjectMap={subjectMap} chapterMap={chapterMap} setStatus={setPlanStatus} start={beginFocus} buildGeneralPlan={buildGeneralPlan} addTask={addQuickTask}/>}
         {view==='Focus'&&<FocusHub workspace={workspace} subjectTime={subjectTime} start={beginFocus}/>}
-        {view==='Learning'&&<LearningTracker workspace={workspace} onAdd={addLearningVideo} onUpdate={updateLearningProgress}/>}
+        {view==='Learning'&&<LearningTracker workspace={workspace} onAdd={addLearningVideo} onUpdate={updateLearningProgress} onGenerateKit={generateLearningKit}/>}
         {view==='Subjects'&&<Subjects workspace={workspace} onAdd={addSubject}/>}
         {view==='Library'&&<LibraryView workspace={workspace}/>}
         {view==='Syllabus'&&<Syllabus workspace={workspace} subjectMap={subjectMap} chapterMap={chapterMap} upload={()=>fileRef.current?.click()}/>}
@@ -853,7 +923,7 @@ function FocusHub({workspace,subjectTime,start}:any){
 }
 
 
-function LearningTracker({workspace,onAdd,onUpdate}:any){
+function LearningTracker({workspace,onAdd,onUpdate,onGenerateKit}:any){
   const [url,setUrl]=useState('');
   const [title,setTitle]=useState('');
   const [subjectId,setSubjectId]=useState('');
@@ -871,6 +941,8 @@ function LearningTracker({workspace,onAdd,onUpdate}:any){
   const totalWatched=Math.round(workspace.videoProgress.reduce((n:number,p:Row)=>n+Number(p.watched_seconds||0),0)/60);
   const completed=workspace.videoProgress.filter((p:Row)=>Number(p.completion)>=90).length;
   const mappedTopics=new Set(workspace.videos.filter((v:Row)=>v.topic_id).map((v:Row)=>v.topic_id)).size;
+  const companionCards=workspace.flashcards.filter((card:Row)=>card.source_kind==='learning_companion').length;
+  const unresolvedDoubts=workspace.doubts.length;
 
   async function submit(e:React.FormEvent){
     e.preventDefault();
@@ -878,19 +950,20 @@ function LearningTracker({workspace,onAdd,onUpdate}:any){
     setUrl('');setTitle('');setChapterId('');setTopicId('');setCompletion(0);setWatchedMinutes(0);setSummary('');
   }
 
-  return <><SectionHead eyebrow="CONNECTED LEARNING" title="Learning tracker" copy="Track what you learn across YouTube, Physics Wallah, DIKSHA, Khan Academy, school videos and other lesson links—then map each item to a real subject, chapter and topic."/><div className="learning-metrics"><Metric icon={Video} label="Tracked lessons" value={String(workspace.videos.length)} detail="Across all connected learning sources"/><Metric icon={Clock3} label="Watched time" value={totalWatched?totalWatched+' min':'No watch time yet'} detail="From saved video progress"/><Metric icon={Check} label="90%+ complete" value={String(completed)} detail="Lessons almost or fully completed"/><Metric icon={Target} label="Topics mapped" value={String(mappedTopics)} detail="Curriculum topics connected to lessons"/></div><section className="connected-card learning-add-card"><header><div><span>ADD LEARNING</span><h3>Connect a lesson to StudyOS</h3><p>Paste the real lesson URL. StudyOS stores your progress and summary; it does not fabricate watch history.</p></div></header><form className="learning-add-form" onSubmit={submit}><label className="learning-wide">Lesson URL<input type="url" required value={url} onChange={e=>setUrl(e.target.value)} placeholder="YouTube, PW, DIKSHA, Khan Academy, school portal…"/></label><label className="learning-wide">Lesson title<input required value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Force and Pressure — One Shot"/></label><label>Subject<select value={subjectId} onChange={e=>{setSubjectId(e.target.value);setChapterId('');setTopicId('')}}><option value="">Unassigned</option>{workspace.subjects.map((s:Row)=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label>Chapter<select value={chapterId} onChange={e=>{setChapterId(e.target.value);setTopicId('')}}><option value="">No chapter</option>{chapters.map((ch:Row)=><option key={ch.id} value={ch.id}>{ch.title}</option>)}</select></label><label>Topic<select value={topicId} onChange={e=>setTopicId(e.target.value)}><option value="">No topic</option>{topics.map((t:Row)=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label><label>Video length<input type="number" min="1" max="720" value={durationMinutes} onChange={e=>setDurationMinutes(Number(e.target.value))}/><small>minutes</small></label><label>Watched<input type="number" min="0" max="720" value={watchedMinutes} onChange={e=>setWatchedMinutes(Number(e.target.value))}/><small>minutes</small></label><label>Completion<select value={completion} onChange={e=>setCompletion(Number(e.target.value))}>{[0,10,25,50,75,90,100].map(n=><option key={n} value={n}>{n}%</option>)}</select></label><label className="learning-wide">What did you learn?<textarea value={summary} onChange={e=>setSummary(e.target.value)} placeholder="Write or paste a short summary, formulas, concepts, doubts, or key takeaways…"/></label><button className="premium-button learning-save"><Plus size={15}/>Save learning progress</button></form></section><section className="learning-history"><div className="learning-history-head"><div><span>YOUR LEARNING STREAM</span><h3>Resume and update lessons</h3></div><small>{workspace.videos.length} tracked</small></div>{workspace.videos.length?<div className="learning-card-grid">{workspace.videos.map((video:Row)=><LearningVideoCard key={video.id} video={video} workspace={workspace} onUpdate={onUpdate}/>)}</div>:<Empty icon={Video} title="No connected lessons yet" copy="Add your first YouTube, Physics Wallah, DIKSHA, Khan Academy, school, or other lesson above."/>}</section></>
+  return <><SectionHead eyebrow="CONNECTED LEARNING" title="Learning tracker" copy="Track what you learn across YouTube, Physics Wallah, DIKSHA, Khan Academy, school videos and other lesson links—then map each item to a real subject, chapter and topic."/><div className="learning-metrics learning-metrics-five"><Metric icon={Video} label="Tracked lessons" value={String(workspace.videos.length)} detail="Across all connected learning sources"/><Metric icon={Clock3} label="Watched time" value={totalWatched?totalWatched+' min':'No watch time yet'} detail="From saved video progress"/><Metric icon={Check} label="90%+ complete" value={String(completed)} detail="Lessons almost or fully completed"/><Metric icon={Target} label="Topics mapped" value={String(mappedTopics)} detail="Curriculum topics connected to lessons"/><Metric icon={Brain} label="Companion flashcards" value={String(companionCards)} detail={unresolvedDoubts?unresolvedDoubts+' unresolved learning doubts':'Generated from your own learning notes'}/></div><section className="connected-card learning-add-card"><header><div><span>ADD LEARNING</span><h3>Connect a lesson to StudyOS</h3><p>Paste the real lesson URL. StudyOS stores your progress and summary; it does not fabricate watch history.</p></div></header><form className="learning-add-form" onSubmit={submit}><label className="learning-wide">Lesson URL<input type="url" required value={url} onChange={e=>setUrl(e.target.value)} placeholder="YouTube, PW, DIKSHA, Khan Academy, school portal…"/></label><label className="learning-wide">Lesson title<input required value={title} onChange={e=>setTitle(e.target.value)} placeholder="e.g. Force and Pressure — One Shot"/></label><label>Subject<select value={subjectId} onChange={e=>{setSubjectId(e.target.value);setChapterId('');setTopicId('')}}><option value="">Unassigned</option>{workspace.subjects.map((s:Row)=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label>Chapter<select value={chapterId} onChange={e=>{setChapterId(e.target.value);setTopicId('')}}><option value="">No chapter</option>{chapters.map((ch:Row)=><option key={ch.id} value={ch.id}>{ch.title}</option>)}</select></label><label>Topic<select value={topicId} onChange={e=>setTopicId(e.target.value)}><option value="">No topic</option>{topics.map((t:Row)=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label><label>Video length<input type="number" min="1" max="720" value={durationMinutes} onChange={e=>setDurationMinutes(Number(e.target.value))}/><small>minutes</small></label><label>Watched<input type="number" min="0" max="720" value={watchedMinutes} onChange={e=>setWatchedMinutes(Number(e.target.value))}/><small>minutes</small></label><label>Completion<select value={completion} onChange={e=>setCompletion(Number(e.target.value))}>{[0,10,25,50,75,90,100].map(n=><option key={n} value={n}>{n}%</option>)}</select></label><label className="learning-wide">What did you learn?<textarea value={summary} onChange={e=>setSummary(e.target.value)} placeholder="Write or paste a short summary, formulas, concepts, doubts, or key takeaways…"/></label><button className="premium-button learning-save"><Plus size={15}/>Save learning progress</button></form></section><section className="learning-history"><div className="learning-history-head"><div><span>YOUR LEARNING STREAM</span><h3>Resume and update lessons</h3></div><small>{workspace.videos.length} tracked</small></div>{workspace.videos.length?<div className="learning-card-grid">{workspace.videos.map((video:Row)=><LearningVideoCard key={video.id} video={video} workspace={workspace} onUpdate={onUpdate} onGenerateKit={onGenerateKit}/>)}</div>:<Empty icon={Video} title="No connected lessons yet" copy="Add your first YouTube, Physics Wallah, DIKSHA, Khan Academy, school, or other lesson above."/>}</section></>
 }
 
-function LearningVideoCard({video,workspace,onUpdate}:any){
+function LearningVideoCard({video,workspace,onUpdate,onGenerateKit}:any){
   const progress=workspace.videoProgress.find((p:Row)=>p.video_id===video.id);
   const resource=workspace.resources.find((r:Row)=>r.metadata?.kind==='video_summary'&&r.metadata?.video_id===video.id);
+  const kit=workspace.resources.find((r:Row)=>r.metadata?.kind==='ai_learning_artifacts'&&r.metadata?.video_id===video.id);
   const [completion,setCompletion]=useState(Number(progress?.completion||0));
   const [watchedMinutes,setWatchedMinutes]=useState(Math.round(Number(progress?.watched_seconds||0)/60));
   const [summary,setSummary]=useState(String(resource?.metadata?.summary||''));
   const subject=workspace.subjects.find((s:Row)=>s.id===video.subject_id);
   const chapter=workspace.chapters.find((ch:Row)=>ch.id===video.chapter_id);
   const topic=workspace.topics.find((t:Row)=>t.id===video.topic_id);
-  return <article className="connected-card learning-video-card"><div className="learning-source-row"><span className={'provider-chip provider-'+String(video.provider||'other')}>{providerLabel(video)}</span><span>{completion}% watched</span></div><h3>{video.title}</h3><p>{[subject?.name,chapter?.title,topic?.title].filter(Boolean).join(' · ')||'Not mapped to curriculum yet'}</p><div className="learning-progress"><i style={{width:Math.max(0,Math.min(100,completion))+'%'}}/></div><div className="learning-progress-controls"><label>Progress<select value={completion} onChange={e=>setCompletion(Number(e.target.value))}>{[0,10,25,50,75,90,100].map(n=><option key={n} value={n}>{n}%</option>)}</select></label><label>Watched<input type="number" min="0" max="720" value={watchedMinutes} onChange={e=>setWatchedMinutes(Number(e.target.value))}/><small>min</small></label></div><label className="learning-summary-label">Learning summary<textarea value={summary} onChange={e=>setSummary(e.target.value)} placeholder="Key concepts, formulas, examples, doubts…"/></label><div className="learning-card-actions">{video.url?<a href={video.url} target="_blank" rel="noreferrer"><Play size={14}/>Open lesson</a>:null}<button onClick={()=>onUpdate(video,{completion,watchedMinutes,summary})}><Check size={14}/>Save progress</button></div></article>
+  return <article className="connected-card learning-video-card"><div className="learning-source-row"><span className={'provider-chip provider-'+String(video.provider||'other')}>{providerLabel(video)}</span><span>{completion}% watched</span></div><h3>{video.title}</h3><p>{[subject?.name,chapter?.title,topic?.title].filter(Boolean).join(' · ')||'Not mapped to curriculum yet'}</p><div className="learning-progress"><i style={{width:Math.max(0,Math.min(100,completion))+'%'}}/></div><div className="learning-progress-controls"><label>Progress<select value={completion} onChange={e=>setCompletion(Number(e.target.value))}>{[0,10,25,50,75,90,100].map(n=><option key={n} value={n}>{n}%</option>)}</select></label><label>Watched<input type="number" min="0" max="720" value={watchedMinutes} onChange={e=>setWatchedMinutes(Number(e.target.value))}/><small>min</small></label></div><label className="learning-summary-label">Learning summary<textarea value={summary} onChange={e=>setSummary(e.target.value)} placeholder="Key concepts, formulas, examples, doubts…"/></label>{kit?<div className="learning-kit-preview"><span>STUDY KIT</span><p>{String(kit.metadata?.summary||'')}</p><small>{Array.isArray(kit.metadata?.key_points)?kit.metadata.key_points.length:0} key points · {kit.metadata?.ai_used?'AI-assisted':'quick fallback'}</small></div>:null}<div className="learning-card-actions">{video.url?<a href={video.url} target="_blank" rel="noreferrer"><Play size={14}/>Open lesson</a>:null}<button onClick={()=>onUpdate(video,{completion,watchedMinutes,summary})}><Check size={14}/>Save progress</button><button className="kit-button" disabled={summary.trim().length<20} onClick={()=>onGenerateKit(video,summary)}><Sparkles size={14}/>Build study kit</button></div></article>
 }
 
 function SettingsPanel({workspace,email,dark,setDark,subjectsPerDay,setSubjectsPerDay,saveProfile,saveNotifications,sendPasswordReset,signOut}:any){
