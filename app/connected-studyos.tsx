@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 import StudyOSAuth from '@/components/auth/studyos-auth';
+import StudyOSLogo from '@/components/studyos-logo';
 
 type View = 'Home'|'Today'|'Focus'|'Learning'|'Subjects'|'Library'|'Syllabus'|'Exams'|'Revision'|'Papers'|'Analytics'|'Documents'|'Resources'|'Settings';
 type Row = Record<string, any>;
@@ -829,7 +830,7 @@ export default function ConnectedStudyOS() {
   return <main className={`connected-app ${dark?'dark':''}`}>
     <input ref={fileRef} type="file" accept=".pdf,image/*" hidden onChange={e=>{const f=e.target.files?.[0];if(f)uploadDocument(f);e.currentTarget.value='';}}/>
     <aside className="connected-sidebar">
-      <div className="connected-brand"><span><Sparkles size={18}/></span><b>StudyOS <em>AI</em></b></div>
+      <div className="connected-brand"><StudyOSLogo className="app-studyos-logo"/></div>
       <p className="connected-nav-label">Command center</p>
       <nav>{nav.map(([label,Icon])=><button key={label} className={view===label?'active':''} onClick={()=>setView(label)}><Icon size={18}/><span>{label}</span>{label==='Revision'&&workspace.revisions.length>0?<i>{workspace.revisions.length}</i>:null}</button>)}</nav>
       <div className="sidebar-spacer"/>
