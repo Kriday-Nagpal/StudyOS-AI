@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3, Bell, BookOpen, Brain, CalendarDays, Check, ChevronRight, Clock3,
   FileText, Flame, FolderOpen, Library, ListPlus, Loader2, LockKeyhole, LogOut, Menu, Moon, Play,
-  Plus, RefreshCw, RotateCcw, Search, Send, Settings, Sparkles, Sun, Target, Timer, Upload, Video, X,
+  Plus, RotateCcw, Search, Send, Settings, Sparkles, Sun, Target, Timer, Upload, Video, X,
 } from 'lucide-react';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 import StudyOSAuth from '@/components/auth/studyos-auth';
@@ -1007,7 +1007,6 @@ function Subjects({workspace,onAdd,start}:{workspace:Workspace;onAdd:(name:strin
   const [chapterSearch,setChapterSearch]=useState<Record<string,string>>({});
   async function submit(e:React.FormEvent){e.preventDefault();if(!name.trim())return;await onAdd(name);setName('');}
   return <><SectionHead eyebrow="ACADEMIC MAP" title="Subjects & chapters" copy="Current Class 8 curriculum metadata is prefilled where verified. Progress stays honest: chapters remain Not started until you actually study them." action={<form className="add-subject-inline" onSubmit={submit}><input value={name} onChange={e=>setName(e.target.value)} placeholder="Add another subject"/><button><Plus size={15}/>Add</button></form>}/><div className="subject-card-grid">{workspace.subjects.map(s=>{
-    const rows=workspace.progress.filter(p=>p.subject_id===s.id);
     const sessions=workspace.sessions.filter(x=>x.subject_id===s.id);
     const books=workspace.books.filter((b:Row)=>normalized(b.subject)===normalized(s.name));
     const bookIds=new Set(books.map((b:Row)=>b.id));
