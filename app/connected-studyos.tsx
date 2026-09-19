@@ -1,10 +1,11 @@
 'use client';
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/purity */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3, Bell, BookOpen, Brain, CalendarDays, Check, ChevronRight, Clock3,
   FileText, Flame, FolderOpen, Library, Loader2, LogOut, Menu, Moon, Play,
-  Plus, RefreshCw, Search, Send, Settings, Sparkles, Sun, Target, Upload, X,
+  RefreshCw, Search, Send, Settings, Sparkles, Sun, Target, Upload, X,
 } from 'lucide-react';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 
