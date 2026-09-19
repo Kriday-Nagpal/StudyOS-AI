@@ -9,7 +9,7 @@ import {
 import StudyOSLogo from '@/components/studyos-logo';
 import { getSupabaseClient } from '@/lib/supabase';
 
-type Row = Record<string, unknown>;
+type Row={id:string;[key:string]:string|number|boolean|null|undefined};
 type SessionShape={user:{id:string};access_token:string};
 type YTReadyEvent={target:YTPlayer};
 type YTStateEvent={data:number};
