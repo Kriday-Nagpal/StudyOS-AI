@@ -1031,6 +1031,8 @@ function LearningTracker({workspace,onAdd,onUpdate,onMap,onGenerateKit}:any){
   const [completion,setCompletion]=useState(0);
   const [watchedMinutes,setWatchedMinutes]=useState(0);
   const [summary,setSummary]=useState('');
+  const [learningSearch,setLearningSearch]=useState('');
+  const [learningFilter,setLearningFilter]=useState<'all'|'continue'|'complete'|'mapping'>('all');
 
   const subject=workspace.subjects.find((s:Row)=>s.id===subjectId);
   const bookIds=new Set(workspace.books.filter((b:Row)=>normalized(b.subject)===normalized(subject?.name)).map((b:Row)=>b.id));
@@ -1069,6 +1071,29 @@ function LearningTracker({workspace,onAdd,onUpdate,onMap,onGenerateKit}:any){
     const completion=effectiveVideoCompletion(progress);
     return completion>0&&completion<90;
   }).length;
+  const staleResumeCount=workspace.videos.filter((v:Row)=>{
+    const progress=workspace.videoProgress.find((p:Row)=>p.video_id===v.id);
+    const completion=effectiveVideoCompletion(progress);
+    const last=progress?.last_watched_at?new Date(progress.last_watched_at).getTime():0;
+    return completion>0&&completion<90&&last>0&&Date.now()-last>3*86400000;
+  }).length;
+  const visibleLearningVideos=[...workspace.videos]
+    .filter((v:Row)=>{
+      const progress=workspace.videoProgress.find((p:Row)=>p.video_id===v.id);
+      const completion=effectiveVideoCompletion(progress);
+      const mappingNeedsHelp=!v.chapter_id||Number(v.classification_confidence||0)<0.55;
+      if(learningFilter==='continue'&&!(completion>0&&completion<90))return false;
+      if(learningFilter==='complete'&&completion<90)return false;
+      if(learningFilter==='mapping'&&!mappingNeedsHelp)return false;
+      const query=normalized(learningSearch);
+      if(query&&!normalized([v.title,providerLabel(v),workspace.subjects.find((s:Row)=>s.id===v.subject_id)?.name,workspace.chapters.find((ch:Row)=>ch.id===v.chapter_id)?.title].filter(Boolean).join(' ')).includes(query))return false;
+      return true;
+    })
+    .sort((a:Row,b:Row)=>{
+      const pa=workspace.videoProgress.find((p:Row)=>p.video_id===a.id);
+      const pb=workspace.videoProgress.find((p:Row)=>p.video_id===b.id);
+      return new Date(pb?.last_watched_at||b.created_at||0).getTime()-new Date(pa?.last_watched_at||a.created_at||0).getTime();
+    });
 
   async function submit(e:React.FormEvent){
     e.preventDefault();
@@ -1091,7 +1116,7 @@ function LearningTracker({workspace,onAdd,onUpdate,onMap,onGenerateKit}:any){
     <section className="connected-card learning-health-card">
       <header><div><span>LEARNING HEALTH</span><h3>What StudyOS should act on next</h3><p>Signals from the last 7 days of precision learning, mapping quality and unfinished lessons.</p></div><a href="/theater"><Play size={14}/>Track a lesson</a></header>
       <div className="learning-health-grid">
-        <article><div><Play size={15}/><span>RESUME QUEUE</span></div><strong>{resumeQueue}</strong><small>Started lessons below 90% verified/known completion</small></article>
+        <article><div><Play size={15}/><span>RESUME QUEUE</span></div><strong>{resumeQueue}</strong><small>{staleResumeCount?staleResumeCount+' untouched for 3+ days':'Started lessons below 90% verified/known completion'}</small></article>
         <article className={needsMapping?'needs-attention':''}><div><Target size={15}/><span>NEEDS MAPPING</span></div><strong>{needsMapping}</strong><small>{needsMapping?'Confirm uncertain chapter/topic mappings':'All current lessons have useful mapping'}</small></article>
         <article><div><Clock3 size={15}/><span>7-DAY LEARNING</span></div><strong>{Math.round(recentEngagedSeconds/60)}<em>m</em></strong><small>Precision active learning time</small></article>
         <article><div><Timer size={15}/><span>AVG SESSION</span></div><strong>{averageSessionMinutes}<em>m</em></strong><small>{recentTrackingSessions.length} precision sessions in window</small></article>
@@ -1138,8 +1163,17 @@ function LearningTracker({workspace,onAdd,onUpdate,onMap,onGenerateKit}:any){
     </section>
 
     <section className="learning-history">
-      <div className="learning-history-head"><div><span>YOUR LEARNING STREAM</span><h3>Resume, review and build Study Kits</h3></div><small>{workspace.videos.length} tracked</small></div>
-      {workspace.videos.length?<div className="learning-card-grid">{workspace.videos.map((video:Row)=><LearningVideoCard key={video.id} video={video} workspace={workspace} onUpdate={onUpdate} onMap={onMap} onGenerateKit={onGenerateKit}/>)}</div>:<Empty icon={Video} title="No connected lessons yet" copy="Open Precision Theater for YouTube or add a lesson manually above."/>}
+      <div className="learning-history-head"><div><span>YOUR LEARNING STREAM</span><h3>Resume, review and build Study Kits</h3></div><small>{visibleLearningVideos.length} shown · {workspace.videos.length} tracked</small></div>
+      <div className="learning-stream-toolbar">
+        <label><Search size={14}/><input value={learningSearch} onChange={e=>setLearningSearch(e.target.value)} placeholder="Search lessons, subjects or chapters…"/></label>
+        <div>
+          <button className={learningFilter==='all'?'active':''} onClick={()=>setLearningFilter('all')}>All</button>
+          <button className={learningFilter==='continue'?'active':''} onClick={()=>setLearningFilter('continue')}>Continue <span>{resumeQueue}</span></button>
+          <button className={learningFilter==='complete'?'active':''} onClick={()=>setLearningFilter('complete')}>90%+ <span>{verifiedComplete}</span></button>
+          <button className={learningFilter==='mapping'?'active':''} onClick={()=>setLearningFilter('mapping')}>Needs Mapping <span>{needsMapping}</span></button>
+        </div>
+      </div>
+      {visibleLearningVideos.length?<div className="learning-card-grid">{visibleLearningVideos.map((video:Row)=><LearningVideoCard key={video.id} video={video} workspace={workspace} onUpdate={onUpdate} onMap={onMap} onGenerateKit={onGenerateKit}/>)}</div>:<Empty icon={Video} title={workspace.videos.length?'Nothing matches this view':'No connected lessons yet'} copy={workspace.videos.length?'Try another filter or search term.':'Open Precision Theater for YouTube or add a lesson manually above.'}/>}
     </section>
   </>
 }
