@@ -461,6 +461,13 @@ export async function POST(request: Request) {
     const reviewTitle = 'Review: ' + video.title;
     const decisionCompletion = hasVerifiedCoverage ? verifiedCompletion : compatibilityCompletion;
     const isComplete = decisionCompletion >= 90;
+    const previousWatchedAt = previous?.last_watched_at ? new Date(previous.last_watched_at).getTime() : Date.now();
+    const staleDays = Math.max(0, Math.min(30, Math.floor((Date.now() - previousWatchedAt) / 86400000)));
+    const remainingPercent = Math.max(0, 100 - decisionCompletion);
+    const activeMinutes = Math.max(0, Math.round(engagedTotal / 60));
+    const recommendationPriority = isComplete
+      ? Math.min(62, 42 + Math.min(20, staleDays * 3))
+      : Math.min(95, Math.round(58 + remainingPercent * 0.28 + Math.min(10, staleDays * 2)));
     let recommendationWarning: string | null = null;
 
     try {
@@ -477,12 +484,12 @@ export async function POST(request: Request) {
         title: isComplete ? reviewTitle : continueTitle,
         reason: hasVerifiedCoverage
           ? isComplete
-            ? ['Verified unique coverage reached 90%+', 'Review soon to strengthen retention']
-            : ['Verified lesson coverage is unfinished', Math.round(decisionCompletion) + '% uniquely covered']
+            ? ['Verified unique coverage reached 90%+', staleDays ? staleDays + ' days since the last checkpoint' : 'Freshly completed — review can wait', activeMinutes + ' active minutes recorded']
+            : ['Verified lesson coverage is unfinished', Math.round(decisionCompletion) + '% uniquely covered', staleDays ? staleDays + ' days since the last checkpoint' : 'Recently active', activeMinutes + ' active minutes recorded']
           : isComplete
-            ? ['Legacy position-based lesson progress reached 90%+', 'Review soon to strengthen retention']
-            : ['Tracked lesson is unfinished', Math.round(decisionCompletion) + '% position progress'],
-        priority_score: isComplete ? 58 : 72,
+            ? ['Known lesson progress reached 90%+', staleDays ? staleDays + ' days since the last checkpoint' : 'Freshly completed']
+            : ['Tracked lesson is unfinished', Math.round(decisionCompletion) + '% known progress', staleDays ? staleDays + ' days since the last checkpoint' : 'Recently active'],
+        priority_score: recommendationPriority,
         estimated_minutes: isComplete
           ? 10
           : Math.max(10, Math.min(35, duration > 0 ? Math.round((duration * (1 - decisionCompletion / 100)) / 60) : 20)),
