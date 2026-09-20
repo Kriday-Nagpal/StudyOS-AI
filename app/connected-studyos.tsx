@@ -592,9 +592,11 @@ export default function ConnectedStudyOS() {
   async function addQuickTask(input:{subjectId?:string;title:string;minutes:number;activityType:string}){
     if(!supabase||!session?.user?.id||!input.title.trim())return;
     const planId=await ensureTodayPlan();if(!planId)return;
+    const allowedActivities=new Set(['learn','read','notes','video','practice','revision','homework','paper']);
+    const activityType=allowedActivities.has(input.activityType)?input.activityType:'learn';
     const r=await supabase.from('daily_plan_items').insert({
       daily_plan_id:planId,user_id:session.user.id,subject_id:input.subjectId||null,chapter_id:null,topic_id:null,
-      title:input.title.trim(),activity_type:input.activityType,estimated_minutes:Math.max(1,Math.min(720,input.minutes)),
+      title:input.title.trim(),activity_type:activityType,estimated_minutes:Math.max(1,Math.min(720,input.minutes)),
       priority_score:50,reason:['Added manually in General Study Mode'],status:'todo',sort_order:todaysPlan.length
     });
     if(r.error){setError(r.error.message);return;}
