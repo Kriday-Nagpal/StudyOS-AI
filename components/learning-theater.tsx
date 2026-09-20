@@ -129,7 +129,7 @@ function rangeSeconds(ranges:CoverageRange[]){
   return ranges.reduce((sum,[a,b])=>sum+Math.max(0,b-a),0);
 }
 
-function newSession(videoId:string):SessionMetrics{
+function newSession():SessionMetrics{
   return{
     clientSessionId:(globalThis.crypto?.randomUUID?.()||('session-'+Date.now()+'-'+Math.random().toString(36).slice(2))),
     startedAt:new Date().toISOString(),
@@ -145,7 +145,7 @@ function newSession(videoId:string):SessionMetrics{
 }
 
 function loadSession(videoId:string):SessionMetrics{
-  if(typeof window==='undefined')return newSession(videoId);
+  if(typeof window==='undefined')return newSession();
   const key='studyos-theater-v2:'+videoId;
   try{
     const saved=JSON.parse(sessionStorage.getItem(key)||'null') as SessionMetrics|null;
@@ -161,7 +161,7 @@ function loadSession(videoId:string):SessionMetrics{
       };
     }
   }catch{}
-  return newSession(videoId);
+  return newSession();
 }
 
 export default function LearningTheater({initialUrl='',initialTitle=''}:{initialUrl?:string;initialTitle?:string}){
@@ -180,9 +180,6 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
     ended:false,
     lastSeen:0,
   });
-  const baseCoverageRef=useRef<CoverageRange[]>([]);
-  const baseEngagedRef=useRef(0);
-  const baseContentRef=useRef(0);
   const lastSampleRef=useRef({wall:0,position:0,state:-1 as PlayerState,rate:1});
   const syncingRef=useRef(false);
   const endedRef=useRef(false);
@@ -210,8 +207,20 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
   const [tabVisible,setTabVisible]=useState(true);
   const [trackingEnabled,setTrackingEnabled]=useState(true);
   const [syncInterval,setSyncIntervalSeconds]=useState(15);
-  const [metricTick,setMetricTick]=useState(0);
   const [resumeAt,setResumeAt]=useState(0);
+  const [liveMetrics,setLiveMetrics]=useState<SessionMetrics>({
+    clientSessionId:'pending-session',
+    startedAt:'',
+    engagedSeconds:0,
+    contentSeconds:0,
+    coverageRanges:[],
+    seekCount:0,
+    pauseCount:0,
+    bufferSeconds:0,
+    ended:false,
+    lastSeen:0,
+  });
+  const [baseEvidence,setBaseEvidence]=useState<{ranges:CoverageRange[];engaged:number;content:number}>({ranges:[],engaged:0,content:0});
   const [serverMetrics,setServerMetrics]=useState<ServerMetrics>({
     verifiedCompletion:0,engagedSeconds:0,contentSeconds:0,furthestPosition:0,coverageSeconds:0,sessions:0,trackingConfidence:1
   });
@@ -219,35 +228,35 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
   const [events,setEvents]=useState<Array<{at:number;label:string;detail:string;kind:'ok'|'info'|'warn'}>>([]);
   const [smartSession,setSmartSession]=useState<{startedAt:number;videoId:string;title:string;url:string;subjectId:string}|null>(null);
   const [returned,setReturned]=useState(false);
-  const [nowTick,setNowTick]=useState(Date.now());
+  const [nowTick,setNowTick]=useState(0);
 
   const videoId=useMemo(()=>youtubeId(loadedUrl),[loadedUrl]);
   const isYoutube=Boolean(videoId);
   const positionCompletion=duration>0?Math.max(0,Math.min(100,current/duration*100)):0;
-  const localRanges=metricsRef.current.coverageRanges;
   const projectedRanges=useMemo(
-    ()=>mergeRanges([...baseCoverageRef.current,...localRanges],duration||86400),
-    // metricTick intentionally drives ref-derived coverage recalculation.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [duration,metricTick,videoId]
+    ()=>mergeRanges([...baseEvidence.ranges,...liveMetrics.coverageRanges],duration||86400),
+    [baseEvidence.ranges,liveMetrics.coverageRanges,duration]
   );
   const projectedCoverageSeconds=rangeSeconds(projectedRanges);
   const projectedVerified=duration>0?Math.min(100,projectedCoverageSeconds/duration*100):serverMetrics.verifiedCompletion;
-  const projectedEngaged=baseEngagedRef.current+metricsRef.current.engagedSeconds;
-  const projectedContent=baseContentRef.current+metricsRef.current.contentSeconds;
+  const projectedEngaged=baseEvidence.engaged+liveMetrics.engagedSeconds;
+  const projectedContent=baseEvidence.content+liveMetrics.contentSeconds;
   const filteredChapters=chapters.filter(ch=>!subjectId||ch.subject_id===subjectId||ch._subject_id===subjectId);
 
   useEffect(()=>{titleRef.current=title},[title]);
 
   useEffect(()=>{
     if(typeof window==='undefined')return;
-    setOnline(navigator.onLine);
-    setTabVisible(document.visibilityState==='visible');
-    try{
-      const raw=JSON.parse(localStorage.getItem('studyos-theater-v2-settings')||'{}');
-      setTrackingEnabled(raw.trackingEnabled!==false);
-      setSyncIntervalSeconds([10,15,30,60].includes(Number(raw.syncInterval))?Number(raw.syncInterval):15);
-    }catch{}
+    const timer=window.setTimeout(()=>{
+      setOnline(navigator.onLine);
+      setTabVisible(document.visibilityState==='visible');
+      try{
+        const raw=JSON.parse(localStorage.getItem('studyos-theater-v2-settings')||'{}');
+        setTrackingEnabled(raw.trackingEnabled!==false);
+        setSyncIntervalSeconds([10,15,30,60].includes(Number(raw.syncInterval))?Number(raw.syncInterval):15);
+      }catch{}
+    },0);
+    return()=>window.clearTimeout(timer);
   },[]);
 
   useEffect(()=>{
@@ -301,7 +310,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
 
   const addEvent=useCallback((label:string,detail:string,kind:'ok'|'info'|'warn'='info')=>{
     setEvents(list=>[{at:Date.now(),label,detail,kind},...list].slice(0,6));
-  },[]);
+  },[setEvents]);
 
   const persistMetrics=useCallback(()=>{
     if(typeof window==='undefined'||!videoId)return;
@@ -321,6 +330,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
     if(!trackingEnabled&&event!=='manual')return false;
     if(syncingRef.current)return false;
 
+    const checkpointEvent=force&&event==='progress'?'forced':event;
     const seconds=Math.max(0,Number(player.getCurrentTime()||0));
     const total=Math.max(0,Number(player.getDuration()||0));
     const data=player.getVideoData?.()||{};
@@ -344,7 +354,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
       pauseCount:metricsRef.current.pauseCount,
       bufferSeconds:Number(metricsRef.current.bufferSeconds.toFixed(2)),
       playbackRate:Number(player.getPlaybackRate?.()||1),
-      event,
+      event:checkpointEvent,
       visible:document.visibilityState==='visible',
     };
 
@@ -408,11 +418,11 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
 
   const resetTrackingSession=useCallback(()=>{
     if(!videoId)return;
-    metricsRef.current=newSession(videoId);
+    metricsRef.current=newSession();
+    setLiveMetrics({...metricsRef.current,coverageRanges:[...metricsRef.current.coverageRanges]});
     endedRef.current=false;
     lastSampleRef.current={wall:performance.now(),position:Number(playerRef.current?.getCurrentTime()||0),state:playerRef.current?.getPlayerState()||-1,rate:Number(playerRef.current?.getPlaybackRate?.()||1)};
     persistMetrics();
-    setMetricTick(v=>v+1);
     addEvent('New study session','Fresh active-time and coverage counters started.','info');
   },[addEvent,persistMetrics,videoId]);
 
@@ -421,10 +431,10 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
     let disposed=false;
     metricsRef.current=loadSession(videoId);
     endedRef.current=metricsRef.current.ended;
-    setMetricTick(v=>v+1);
 
     const build=()=>{
       if(disposed||!window.YT?.Player)return;
+      setLiveMetrics({...metricsRef.current,coverageRanges:[...metricsRef.current.coverageRanges]});
       playerRef.current?.destroy?.();
       playerRef.current=new window.YT.Player('studyos-youtube-player',{
         videoId,
@@ -449,9 +459,11 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
               setCurrentSessionKnown(Boolean(trackingSession));
               if(progress){
                 const ranges=mergeRanges(Array.isArray(progress.coverage_ranges)?progress.coverage_ranges:[],total||86400);
-                baseCoverageRef.current=ranges;
-                baseEngagedRef.current=Math.max(0,Number(progress.engaged_seconds||0)-Number(trackingSession?.engaged_seconds||0));
-                baseContentRef.current=Math.max(0,Number(progress.content_seconds||0)-Number(trackingSession?.content_seconds||0));
+                setBaseEvidence({
+                  ranges,
+                  engaged:Math.max(0,Number(progress.engaged_seconds||0)-Number(trackingSession?.engaged_seconds||0)),
+                  content:Math.max(0,Number(progress.content_seconds||0)-Number(trackingSession?.content_seconds||0)),
+                });
                 setServerMetrics({
                   verifiedCompletion:Number(progress.verified_completion||0),
                   engagedSeconds:Number(progress.engaged_seconds||0),
@@ -554,7 +566,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
       metricsRef.current.lastSeen=Date.now();
       lastSampleRef.current={wall:now,position,state,rate};
       persistMetrics();
-      setMetricTick(v=>v+1);
+      setLiveMetrics({...metricsRef.current,coverageRanges:[...metricsRef.current.coverageRanges]});
     },1000);
 
     return()=>{
@@ -615,9 +627,11 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
     setCurrent(0);
     setDuration(0);
     setResumeAt(0);
-    baseCoverageRef.current=[];
-    baseEngagedRef.current=0;
-    baseContentRef.current=0;
+    setBaseEvidence({ranges:[],engaged:0,content:0});
+    setLiveMetrics({
+      clientSessionId:'pending-session',startedAt:'',engagedSeconds:0,contentSeconds:0,coverageRanges:[],
+      seekCount:0,pauseCount:0,bufferSeconds:0,ended:false,lastSeen:0
+    });
     setServerMetrics({verifiedCompletion:0,engagedSeconds:0,contentSeconds:0,furthestPosition:0,coverageSeconds:0,sessions:0,trackingConfidence:1});
     setCurrentSessionKnown(false);
     setEvents([]);
@@ -772,9 +786,9 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
               <div><BarChart3/><span><b>{Math.max(serverMetrics.sessions+(currentSessionKnown?0:1),1)}</b><small>tracked sessions</small></span></div>
             </div>
             <div className="precision-submetrics">
-              <span><b>{metricsRef.current.seekCount}</b> seeks filtered</span>
-              <span><b>{metricsRef.current.pauseCount}</b> pauses</span>
-              <span><b>{prettySeconds(metricsRef.current.bufferSeconds)}</b> buffering</span>
+              <span><b>{liveMetrics.seekCount}</b> seeks filtered</span>
+              <span><b>{liveMetrics.pauseCount}</b> pauses</span>
+              <span><b>{prettySeconds(liveMetrics.bufferSeconds)}</b> buffering</span>
               <span><b>{fmt(Math.max(serverMetrics.furthestPosition,current))}</b> furthest</span>
             </div>
             {mapping?<div className="theater-map-status"><Check/><div><b>{mapping.chapter_id?'Curriculum mapped':'Lesson tracked safely'}</b><small>{mapping.confidence?Math.round(Number(mapping.confidence)*100)+'% curriculum mapping confidence':'Uncertain academic mapping stays unassigned.'}</small></div></div>:null}
