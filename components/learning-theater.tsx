@@ -204,6 +204,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
   const [serverMetrics,setServerMetrics]=useState<ServerMetrics>({
     verifiedCompletion:0,engagedSeconds:0,contentSeconds:0,furthestPosition:0,coverageSeconds:0,sessions:0,trackingConfidence:1
   });
+  const [currentSessionKnown,setCurrentSessionKnown]=useState(false);
   const [events,setEvents]=useState<Array<{at:number;label:string;detail:string;kind:'ok'|'info'|'warn'}>>([]);
   const [smartSession,setSmartSession]=useState<{startedAt:number;videoId:string;title:string;url:string;subjectId:string}|null>(null);
   const [returned,setReturned]=useState(false);
@@ -369,6 +370,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
       setQueued(false);
       setError('');
       setMapping(result.mapped||null);
+      setCurrentSessionKnown(true);
       setServerMetrics({
         verifiedCompletion:Number(result.verified_completion||0),
         engagedSeconds:Number(result.engaged_seconds||0),
@@ -429,12 +431,16 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
             const {data:video}=await supabase.from('videos').select('id,title').eq('user_id',session.user.id).eq('provider','youtube').eq('external_id',canonical).maybeSingle();
             if(video?.title&&!titleRef.current)setTitle(String(video.title));
             if(video?.id){
-              const {data:progress}=await supabase.from('video_progress').select('*').eq('user_id',session.user.id).eq('video_id',video.id).maybeSingle();
+              const [{data:progress},{data:trackingSession}]=await Promise.all([
+                supabase.from('video_progress').select('*').eq('user_id',session.user.id).eq('video_id',video.id).maybeSingle(),
+                supabase.from('video_tracking_sessions').select('*').eq('user_id',session.user.id).eq('video_id',video.id).eq('client_session_id',metricsRef.current.clientSessionId).maybeSingle()
+              ]);
+              setCurrentSessionKnown(Boolean(trackingSession));
               if(progress){
                 const ranges=mergeRanges(Array.isArray(progress.coverage_ranges)?progress.coverage_ranges:[],total||86400);
                 baseCoverageRef.current=ranges;
-                baseEngagedRef.current=Number(progress.engaged_seconds||0);
-                baseContentRef.current=Number(progress.content_seconds||0);
+                baseEngagedRef.current=Math.max(0,Number(progress.engaged_seconds||0)-Number(trackingSession?.engaged_seconds||0));
+                baseContentRef.current=Math.max(0,Number(progress.content_seconds||0)-Number(trackingSession?.content_seconds||0));
                 setServerMetrics({
                   verifiedCompletion:Number(progress.verified_completion||0),
                   engagedSeconds:Number(progress.engaged_seconds||0),
@@ -602,6 +608,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
     baseEngagedRef.current=0;
     baseContentRef.current=0;
     setServerMetrics({verifiedCompletion:0,engagedSeconds:0,contentSeconds:0,furthestPosition:0,coverageSeconds:0,sessions:0,trackingConfidence:1});
+    setCurrentSessionKnown(false);
     setEvents([]);
     setLoadedUrl(url.trim());
     if(!title.trim()){
@@ -751,7 +758,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
               <div><Target/><span><b>{projectedVerified.toFixed(1)}%</b><small>unique coverage</small></span></div>
               <div><Clock3/><span><b>{prettySeconds(projectedEngaged)}</b><small>active watch time</small></span></div>
               <div><Zap/><span><b>{prettySeconds(projectedContent)}</b><small>content played</small></span></div>
-              <div><BarChart3/><span><b>{Math.max(serverMetrics.sessions,1)}</b><small>tracked sessions</small></span></div>
+              <div><BarChart3/><span><b>{Math.max(serverMetrics.sessions+(currentSessionKnown?0:1),1)}</b><small>tracked sessions</small></span></div>
             </div>
             <div className="precision-submetrics">
               <span><b>{metricsRef.current.seekCount}</b> seeks filtered</span>
