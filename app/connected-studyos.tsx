@@ -69,6 +69,12 @@ function pct(value: unknown) {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0;
 }
+function effectiveVideoCompletion(progress?: Row | null) {
+  if (!progress) return 0;
+  return Number(progress.tracking_version || 1) >= 2
+    ? Number(progress.verified_completion || 0)
+    : Number(progress.completion || 0);
+}
 function formatDate(value?: string) {
   if (!value) return '—';
   return new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short'}).format(new Date(value));
@@ -298,8 +304,15 @@ export default function ConnectedStudyOS() {
       if(!s.subject_id) return;
       data.set(s.subject_id,(data.get(s.subject_id)||0)+Number(s.duration_minutes||0));
     });
+    workspace.trackingSessions.filter((s:Row)=>new Date(s.last_event_at||s.started_at).getTime()>=cutoff).forEach((s:Row)=>{
+      const video=workspace.videos.find((v:Row)=>v.id===s.video_id);
+      if(!video?.subject_id) return;
+      const minutes=Number(s.engaged_seconds||0)/60;
+      if(minutes<=0) return;
+      data.set(video.subject_id,(data.get(video.subject_id)||0)+minutes);
+    });
     return data;
-  },[workspace.sessions]);
+  },[workspace.sessions,workspace.trackingSessions,workspace.videos]);
 
   const generalSubject = useMemo(()=>{
     if(!workspace.subjects.length) return null;
@@ -342,7 +355,11 @@ export default function ConnectedStudyOS() {
   const studyNext = studyMode==='exam' ? (examNext ?? generalStudyNext) : generalStudyNext;
 
   const streak = useMemo(()=>{
-    const days = Array.from(new Set(workspace.sessions.filter(s=>Number(s.duration_minutes)>0).map(s=>dateKey(s.started_at)))).sort().reverse();
+    const focusDays=workspace.sessions.filter(s=>Number(s.duration_minutes)>0).map(s=>dateKey(s.started_at));
+    const learningDays=workspace.trackingSessions
+      .filter((s:Row)=>Number(s.engaged_seconds||0)>=60)
+      .map((s:Row)=>dateKey(String(s.started_at||s.last_event_at)));
+    const days = Array.from(new Set([...focusDays,...learningDays])).sort().reverse();
     let count=0;
     const cursor=new Date();
     for(let i=0;i<370;i++){
@@ -352,13 +369,17 @@ export default function ConnectedStudyOS() {
       cursor.setDate(cursor.getDate()-1);
     }
     return count;
-  },[workspace.sessions]);
+  },[workspace.sessions,workspace.trackingSessions]);
 
   const weekMinutes = useMemo(()=>{
     const cutoff=Date.now()-7*86400000;
-    return workspace.sessions.filter(s=>new Date(s.started_at).getTime()>=cutoff)
+    const focusMinutes=workspace.sessions.filter(s=>new Date(s.started_at).getTime()>=cutoff)
       .reduce((n,s)=>n+Number(s.duration_minutes||0),0);
-  },[workspace.sessions]);
+    const learningMinutes=workspace.trackingSessions
+      .filter((s:Row)=>new Date(s.last_event_at||s.started_at).getTime()>=cutoff)
+      .reduce((n:number,s:Row)=>n+Number(s.engaged_seconds||0)/60,0);
+    return Math.round(focusMinutes+learningMinutes);
+  },[workspace.sessions,workspace.trackingSessions]);
 
   const subjectTime = useMemo(()=>{
     return workspace.subjects
@@ -464,7 +485,7 @@ export default function ConnectedStudyOS() {
         const rows=exams.map((exam:Row,i:number)=>{
           const item=workspace.syllabus.filter((x:Row)=>x.exam_id===exam.id&&x.user_verified&&x.inclusion!=='excluded').sort((a:Row,b:Row)=>Number(b.priority_score||0)+Number(b.blueprint_weight||0)+(b.is_new_content?20:0)-Number(a.priority_score||0)-Number(a.blueprint_weight||0)-(a.is_new_content?20:0))[0];
           const subject=subjectMap.get(exam.subject_id);
-          return {daily_plan_id:planId,user_id:session.user.id,subject_id:exam.subject_id,chapter_id:item?.chapter_id||null,topic_id:item?.topic_id||null,title:item?.label||('Prepare '+(subject?.name||exam.name)),activity_type:'exam_prep',estimated_minutes:minutes,priority_score:95-i*5,reason:['Exam Mode',exam.name+' · '+Math.max(0,Number(daysUntil(exam.exam_date)??0))+' days remaining',item?.is_new_content?'New content prioritized':item?'Confirmed syllabus prioritized':'Exam subject priority'],status:'todo',sort_order:todaysPlan.length+i};
+          return {daily_plan_id:planId,user_id:session.user.id,subject_id:exam.subject_id,chapter_id:item?.chapter_id||null,topic_id:item?.topic_id||null,title:item?.label||('Prepare '+(subject?.name||exam.name)),activity_type:'practice',estimated_minutes:minutes,priority_score:95-i*5,reason:['Exam Mode','Exam preparation',exam.name+' · '+Math.max(0,Number(daysUntil(exam.exam_date)??0))+' days remaining',item?.is_new_content?'New content prioritized':item?'Confirmed syllabus prioritized':'Exam subject priority'],status:'todo',sort_order:todaysPlan.length+i};
         });
         const r=await supabase.from('daily_plan_items').insert(rows); if(r.error){setError(r.error.message);return;}
         setToast('Exam Mode plan added '+rows.length+' priority subject'+(rows.length===1?'':'s')+'.'); await refresh(); return;
@@ -491,8 +512,8 @@ export default function ConnectedStudyOS() {
       const unfinishedVideos=workspace.videos
         .filter((v:Row)=>v.subject_id===s.id)
         .map((v:Row)=>({video:v,progress:workspace.videoProgress.find((p:Row)=>p.video_id===v.id)}))
-        .filter((x:Row)=>Number(x.progress?.completion||0)<90)
-        .sort((a:Row,b:Row)=>Number(b.progress?.completion||0)-Number(a.progress?.completion||0));
+        .filter((x:Row)=>effectiveVideoCompletion(x.progress)<90)
+        .sort((a:Row,b:Row)=>effectiveVideoCompletion(b.progress)-effectiveVideoCompletion(a.progress));
 
       const subjectCards=workspace.flashcards.filter((card:Row)=>card.subject_id===s.id);
       const dueCards=subjectCards.filter((card:Row)=>{
@@ -502,14 +523,14 @@ export default function ConnectedStudyOS() {
 
       if(unfinishedVideos.length && stableNumber(today+'|'+s.id+'|learning')%3!==0){
         const learning=unfinishedVideos[0];
-        const completion=Number(learning.progress?.completion||0);
+        const completion=effectiveVideoCompletion(learning.progress);
         return {
           daily_plan_id:planId,user_id:session.user.id,subject_id:s.id,
           chapter_id:learning.video.chapter_id||null,topic_id:learning.video.topic_id||null,
           title:`Continue: ${learning.video.title}`,activity_type:'video',
           estimated_minutes:Math.min(minutes,Math.max(10,Math.round(Number(learning.video.duration_seconds||1200)/60*(1-completion/100)))),
           priority_score:82-i*4,
-          reason:['Connected Learning','Tracked lesson is unfinished',`${Math.round(completion)}% complete`],
+          reason:['Connected Learning','Tracked lesson is unfinished',`${Math.round(completion)}% verified/known complete`],
           status:'todo',sort_order:todaysPlan.length+i
         };
       }
@@ -518,7 +539,7 @@ export default function ConnectedStudyOS() {
         return {
           daily_plan_id:planId,user_id:session.user.id,subject_id:s.id,
           chapter_id:dueCards[0]?.chapter_id||null,topic_id:dueCards[0]?.topic_id||null,
-          title:`Review ${Math.min(dueCards.length,8)} flashcards · ${s.name}`,activity_type:'flashcards',
+          title:`Review ${Math.min(dueCards.length,8)} flashcards · ${s.name}`,activity_type:'revision',
           estimated_minutes:Math.min(15,minutes),
           priority_score:78-i*4,
           reason:['Learning Companion','Flashcards are due for review'],
@@ -571,9 +592,11 @@ export default function ConnectedStudyOS() {
   async function addQuickTask(input:{subjectId?:string;title:string;minutes:number;activityType:string}){
     if(!supabase||!session?.user?.id||!input.title.trim())return;
     const planId=await ensureTodayPlan();if(!planId)return;
+    const allowedActivities=new Set(['learn','read','notes','video','practice','revision','homework','paper']);
+    const activityType=allowedActivities.has(input.activityType)?input.activityType:'learn';
     const r=await supabase.from('daily_plan_items').insert({
       daily_plan_id:planId,user_id:session.user.id,subject_id:input.subjectId||null,chapter_id:null,topic_id:null,
-      title:input.title.trim(),activity_type:input.activityType,estimated_minutes:Math.max(1,Math.min(720,input.minutes)),
+      title:input.title.trim(),activity_type:activityType,estimated_minutes:Math.max(1,Math.min(720,input.minutes)),
       priority_score:50,reason:['Added manually in General Study Mode'],status:'todo',sort_order:todaysPlan.length
     });
     if(r.error){setError(r.error.message);return;}
@@ -635,6 +658,7 @@ export default function ConnectedStudyOS() {
       completion,
       last_position_seconds:watchedSeconds,
       sessions:Number(existing?.sessions||0)+1,
+      tracking_source:'manual',
       last_watched_at:new Date().toISOString(),
       updated_at:new Date().toISOString()
     },{onConflict:'user_id,video_id'});
@@ -669,6 +693,20 @@ export default function ConnectedStudyOS() {
     if(r.error){setError(r.error.message);return;}
     try{await saveVideoSummary(video,input.summary);}catch(e:any){setError(e?.message||'Progress saved, but the summary could not be saved.');return;}
     setToast('Learning progress updated.');
+    await refresh();
+  }
+
+  async function updateLearningMapping(video:Row,input:{subjectId?:string;chapterId?:string;topicId?:string}){
+    if(!supabase||!session?.user?.id)return;
+    const r=await supabase.from('videos').update({
+      subject_id:input.subjectId||null,
+      chapter_id:input.chapterId||null,
+      topic_id:input.topicId||null,
+      classification_confidence:1,
+      user_verified:true
+    }).eq('id',video.id).eq('user_id',session.user.id);
+    if(r.error){setError(r.error.message);return;}
+    setToast('Learning mapping verified.');
     await refresh();
   }
 
@@ -861,7 +899,7 @@ export default function ConnectedStudyOS() {
         {view==='Home'&&<Home workspace={workspace} studyNext={studyNext} nextExam={nextExam} streak={streak} weekMinutes={weekMinutes} subjectMap={subjectMap} chapterMap={chapterMap} start={beginFocus} upload={()=>fileRef.current?.click()} buildGeneralPlan={buildGeneralPlan}/>}
         {view==='Today'&&<Today workspace={workspace} items={todaysPlan} subjectMap={subjectMap} chapterMap={chapterMap} setStatus={setPlanStatus} start={beginFocus} buildGeneralPlan={buildGeneralPlan} addTask={addQuickTask}/>}
         {view==='Focus'&&<FocusHub workspace={workspace} subjectTime={subjectTime} start={beginFocus}/>}
-        {view==='Learning'&&<LearningTracker workspace={workspace} onAdd={addLearningVideo} onUpdate={updateLearningProgress} onGenerateKit={generateLearningKit}/>}
+        {view==='Learning'&&<LearningTracker workspace={workspace} onAdd={addLearningVideo} onUpdate={updateLearningProgress} onMap={updateLearningMapping} onGenerateKit={generateLearningKit}/>}
         {view==='Subjects'&&<Subjects workspace={workspace} onAdd={addSubject} start={beginFocus}/>}
         {view==='Library'&&<LibraryView workspace={workspace}/>}
         {view==='Syllabus'&&<Syllabus workspace={workspace} subjectMap={subjectMap} chapterMap={chapterMap} upload={()=>fileRef.current?.click()}/>}
@@ -952,7 +990,7 @@ function Home({workspace,studyNext,nextExam,streak,weekMinutes,subjectMap,chapte
   const completed=workspace.planItems.filter((x:Row)=>x.status==='done').length;
   const total=workspace.planItems.length;
   const examActive=workspace.profile?.study_mode==='exam';
-  return <><SectionHead eyebrow={new Intl.DateTimeFormat('en-IN',{weekday:'long',day:'numeric',month:'long'}).format(new Date())} title={`Good to see you, ${workspace.profile.full_name.split(' ')[0]}`} copy={examActive?'Exam Mode is prioritizing upcoming exams and confirmed syllabus evidence.':'General Study Mode balances everyday learning even without exams or date sheets.'} action={<div className="section-actions"><button className="secondary-button" onClick={buildGeneralPlan}><ListPlus size={16}/>{examActive?'Build exam plan':'Balanced plan'}</button><button className="premium-button" onClick={()=>studyNext&&start(studyNext)} disabled={!studyNext}><Play size={16}/>Study next</button></div>}/><section className="hero-intelligence"><div className="hero-copy"><span><Sparkles size={14}/> {examActive?'EXAM MODE PRIORITY':'GENERAL STUDY MODE'}</span>{studyNext?<><h2>{studyNext.title || chapterMap.get(studyNext.chapter_id)?.title || 'Your next study action'}</h2><p>{reasons(studyNext.reason).join(' ') || 'This is currently the highest-value real item in your workspace.'}</p><div><button onClick={()=>start(studyNext)}><Play size={16}/>Start focus</button><small>{studyNext.estimated_minutes?studyNext.estimated_minutes+' min':''}</small></div></>:<><h2>Start anywhere — no date sheet needed</h2><p>Add a subject or start a focus timer. StudyOS can build useful history and balanced plans before you ever add an exam.</p><div><button onClick={buildGeneralPlan}><ListPlus size={16}/>Build balanced plan</button><button onClick={upload}><Upload size={16}/>Add study material</button></div></>}</div><div className="hero-exam">{nextExam?<><span>Next exam</span><strong>{daysUntil(nextExam.exam_date)}</strong><small>days</small><b>{nextExam.name}</b><em>{formatDate(nextExam.exam_date)}</em></>:<><span>Study mode</span><strong>∞</strong><small>any day</small><b>General study active</b><em>No exam required</em></>}</div></section><div className="metric-grid"><Metric icon={Clock3} label="Study time · 7 days" value={weekMinutes?Math.floor(weekMinutes/60)+'h '+weekMinutes%60+'m':'No sessions yet'} detail="Calculated from saved focus sessions"/><Metric icon={Flame} label="Current streak" value={streak?streak+' days':'Start today'} detail="Based on days with logged study"/><Metric icon={BookOpen} label="Active subjects" value={workspace.subjects.length?String(workspace.subjects.length):'Add subjects'} detail="Study any subject without exam setup"/><Metric icon={Check} label="Plan completion" value={total?completed+'/'+total:'No plan yet'} detail="Saved daily plan items"/></div><div className="dashboard-grid"><section className="connected-card wide"><header><div><span>TODAY</span><h3>Your study plan</h3></div><button className="card-link-button" onClick={buildGeneralPlan}>{examActive?'Prioritize exams':'Balance subjects'}</button></header>{workspace.planItems.length?workspace.planItems.slice(0,5).map((x:Row)=><div className="list-row" key={x.id}><span className="row-icon"><BookOpen/></span><div><b>{x.title}</b><small>{subjectMap.get(x.subject_id)?.name || x.activity_type || 'Study'}</small></div><em>{x.status}</em></div>):<Empty icon={CalendarDays} title="No plan yet" copy="Build a balanced general plan instantly. You do not need an exam, syllabus or date sheet."/>}</section><section className="connected-card"><header><div><span>WORKSPACE</span><h3>Study system health</h3></div></header><Health label="Subjects" value={workspace.subjects.length}/><Health label="Saved sessions" value={workspace.sessions.length}/><Health label="Revision due" value={workspace.revisions.length}/><Health label="Optional exams" value={workspace.exams.length}/></section></div></>;
+  return <><SectionHead eyebrow={new Intl.DateTimeFormat('en-IN',{weekday:'long',day:'numeric',month:'long'}).format(new Date())} title={`Good to see you, ${workspace.profile.full_name.split(' ')[0]}`} copy={examActive?'Exam Mode is prioritizing upcoming exams and confirmed syllabus evidence.':'General Study Mode balances everyday learning even without exams or date sheets.'} action={<div className="section-actions"><button className="secondary-button" onClick={buildGeneralPlan}><ListPlus size={16}/>{examActive?'Build exam plan':'Balanced plan'}</button><button className="premium-button" onClick={()=>studyNext&&start(studyNext)} disabled={!studyNext}><Play size={16}/>Study next</button></div>}/><section className="hero-intelligence"><div className="hero-copy"><span><Sparkles size={14}/> {examActive?'EXAM MODE PRIORITY':'GENERAL STUDY MODE'}</span>{studyNext?<><h2>{studyNext.title || chapterMap.get(studyNext.chapter_id)?.title || 'Your next study action'}</h2><p>{reasons(studyNext.reason).join(' ') || 'This is currently the highest-value real item in your workspace.'}</p><div><button onClick={()=>start(studyNext)}><Play size={16}/>Start focus</button><small>{studyNext.estimated_minutes?studyNext.estimated_minutes+' min':''}</small></div></>:<><h2>Start anywhere — no date sheet needed</h2><p>Add a subject or start a focus timer. StudyOS can build useful history and balanced plans before you ever add an exam.</p><div><button onClick={buildGeneralPlan}><ListPlus size={16}/>Build balanced plan</button><button onClick={upload}><Upload size={16}/>Add study material</button></div></>}</div><div className="hero-exam">{nextExam?<><span>Next exam</span><strong>{daysUntil(nextExam.exam_date)}</strong><small>days</small><b>{nextExam.name}</b><em>{formatDate(nextExam.exam_date)}</em></>:<><span>Study mode</span><strong>∞</strong><small>any day</small><b>General study active</b><em>No exam required</em></>}</div></section><div className="metric-grid"><Metric icon={Clock3} label="Study time · 7 days" value={weekMinutes?Math.floor(weekMinutes/60)+'h '+weekMinutes%60+'m':'No sessions yet'} detail="Focus sessions + verified learning time"/><Metric icon={Flame} label="Current streak" value={streak?streak+' days':'Start today'} detail="Based on days with logged study"/><Metric icon={BookOpen} label="Active subjects" value={workspace.subjects.length?String(workspace.subjects.length):'Add subjects'} detail="Study any subject without exam setup"/><Metric icon={Check} label="Plan completion" value={total?completed+'/'+total:'No plan yet'} detail="Saved daily plan items"/></div><div className="dashboard-grid"><section className="connected-card wide"><header><div><span>TODAY</span><h3>Your study plan</h3></div><button className="card-link-button" onClick={buildGeneralPlan}>{examActive?'Prioritize exams':'Balance subjects'}</button></header>{workspace.planItems.length?workspace.planItems.slice(0,5).map((x:Row)=><div className="list-row" key={x.id}><span className="row-icon"><BookOpen/></span><div><b>{x.title}</b><small>{subjectMap.get(x.subject_id)?.name || x.activity_type || 'Study'}</small></div><em>{x.status}</em></div>):<Empty icon={CalendarDays} title="No plan yet" copy="Build a balanced general plan instantly. You do not need an exam, syllabus or date sheet."/>}</section><section className="connected-card"><header><div><span>WORKSPACE</span><h3>Study system health</h3></div></header><Health label="Subjects" value={workspace.subjects.length}/><Health label="Saved sessions" value={workspace.sessions.length}/><Health label="Revision due" value={workspace.revisions.length}/><Health label="Optional exams" value={workspace.exams.length}/></section></div></>;
 }
 
 function Metric({icon:Icon,label,value,detail}:any){return <section className="metric-card"><span><Icon/></span><div><small>{label}</small><b>{value}</b><p>{detail}</p></div></section>}
@@ -983,7 +1021,7 @@ function FocusHub({workspace,subjectTime,start}:any){
 }
 
 
-function LearningTracker({workspace,onAdd,onUpdate,onGenerateKit}:any){
+function LearningTracker({workspace,onAdd,onUpdate,onMap,onGenerateKit}:any){
   const [url,setUrl]=useState('');
   const [title,setTitle]=useState('');
   const [subjectId,setSubjectId]=useState('');
@@ -993,6 +1031,8 @@ function LearningTracker({workspace,onAdd,onUpdate,onGenerateKit}:any){
   const [completion,setCompletion]=useState(0);
   const [watchedMinutes,setWatchedMinutes]=useState(0);
   const [summary,setSummary]=useState('');
+  const [learningSearch,setLearningSearch]=useState('');
+  const [learningFilter,setLearningFilter]=useState<'all'|'continue'|'complete'|'mapping'>('all');
 
   const subject=workspace.subjects.find((s:Row)=>s.id===subjectId);
   const bookIds=new Set(workspace.books.filter((b:Row)=>normalized(b.subject)===normalized(subject?.name)).map((b:Row)=>b.id));
@@ -1016,6 +1056,44 @@ function LearningTracker({workspace,onAdd,onUpdate,onGenerateKit}:any){
   const companionCards=workspace.flashcards.filter((card:Row)=>card.source_kind==='learning_companion').length;
   const unresolvedDoubts=workspace.doubts.length;
   const recentPrecisionSessions=workspace.trackingSessions.slice(0,5);
+  const learningCutoff=Date.now()-7*86400000;
+  const recentTrackingSessions=workspace.trackingSessions.filter((s:Row)=>new Date(s.last_event_at||s.started_at).getTime()>=learningCutoff);
+  const recentEngagedSeconds=recentTrackingSessions.reduce((n:number,s:Row)=>n+Number(s.engaged_seconds||0),0);
+  const recentBufferSeconds=recentTrackingSessions.reduce((n:number,s:Row)=>n+Number(s.buffer_seconds||0),0);
+  const recentSeekCount=recentTrackingSessions.reduce((n:number,s:Row)=>n+Number(s.seek_count||0),0);
+  const averageSessionMinutes=recentTrackingSessions.length?Math.round(recentEngagedSeconds/recentTrackingSessions.length/60):0;
+  const playbackHealth=recentEngagedSeconds+recentBufferSeconds>0
+    ? Math.round(recentEngagedSeconds/(recentEngagedSeconds+recentBufferSeconds)*100)
+    : 0;
+  const needsMapping=workspace.videos.filter((v:Row)=>!v.chapter_id||Number(v.classification_confidence||0)<0.55).length;
+  const resumeQueue=workspace.videos.filter((v:Row)=>{
+    const progress=workspace.videoProgress.find((p:Row)=>p.video_id===v.id);
+    const completion=effectiveVideoCompletion(progress);
+    return completion>0&&completion<90;
+  }).length;
+  const staleResumeCount=workspace.videos.filter((v:Row)=>{
+    const progress=workspace.videoProgress.find((p:Row)=>p.video_id===v.id);
+    const completion=effectiveVideoCompletion(progress);
+    const last=progress?.last_watched_at?new Date(progress.last_watched_at).getTime():0;
+    return completion>0&&completion<90&&last>0&&Date.now()-last>3*86400000;
+  }).length;
+  const visibleLearningVideos=[...workspace.videos]
+    .filter((v:Row)=>{
+      const progress=workspace.videoProgress.find((p:Row)=>p.video_id===v.id);
+      const completion=effectiveVideoCompletion(progress);
+      const mappingNeedsHelp=!v.chapter_id||Number(v.classification_confidence||0)<0.55;
+      if(learningFilter==='continue'&&!(completion>0&&completion<90))return false;
+      if(learningFilter==='complete'&&completion<90)return false;
+      if(learningFilter==='mapping'&&!mappingNeedsHelp)return false;
+      const query=normalized(learningSearch);
+      if(query&&!normalized([v.title,providerLabel(v),workspace.subjects.find((s:Row)=>s.id===v.subject_id)?.name,workspace.chapters.find((ch:Row)=>ch.id===v.chapter_id)?.title].filter(Boolean).join(' ')).includes(query))return false;
+      return true;
+    })
+    .sort((a:Row,b:Row)=>{
+      const pa=workspace.videoProgress.find((p:Row)=>p.video_id===a.id);
+      const pb=workspace.videoProgress.find((p:Row)=>p.video_id===b.id);
+      return new Date(pb?.last_watched_at||b.created_at||0).getTime()-new Date(pa?.last_watched_at||a.created_at||0).getTime();
+    });
 
   async function submit(e:React.FormEvent){
     e.preventDefault();
@@ -1034,6 +1112,18 @@ function LearningTracker({workspace,onAdd,onUpdate,onGenerateKit}:any){
       <Metric icon={Target} label="Topics mapped" value={String(mappedTopics)} detail="Curriculum topics connected"/>
       <Metric icon={Brain} label="Study intelligence" value={String(companionCards)+' cards'} detail={unresolvedDoubts?unresolvedDoubts+' unresolved learning doubts':averageTrackingConfidence?averageTrackingConfidence+'% avg tracking confidence':'Flashcards from your notes'}/>
     </div>
+
+    <section className="connected-card learning-health-card">
+      <header><div><span>LEARNING HEALTH</span><h3>What StudyOS should act on next</h3><p>Signals from the last 7 days of precision learning, mapping quality and unfinished lessons.</p></div><a href="/theater"><Play size={14}/>Track a lesson</a></header>
+      <div className="learning-health-grid">
+        <article><div><Play size={15}/><span>RESUME QUEUE</span></div><strong>{resumeQueue}</strong><small>{staleResumeCount?staleResumeCount+' untouched for 3+ days':'Started lessons below 90% verified/known completion'}</small></article>
+        <article className={needsMapping?'needs-attention':''}><div><Target size={15}/><span>NEEDS MAPPING</span></div><strong>{needsMapping}</strong><small>{needsMapping?'Confirm uncertain chapter/topic mappings':'All current lessons have useful mapping'}</small></article>
+        <article><div><Clock3 size={15}/><span>7-DAY LEARNING</span></div><strong>{Math.round(recentEngagedSeconds/60)}<em>m</em></strong><small>Precision active learning time</small></article>
+        <article><div><Timer size={15}/><span>AVG SESSION</span></div><strong>{averageSessionMinutes}<em>m</em></strong><small>{recentTrackingSessions.length} precision sessions in window</small></article>
+        <article><div><Check size={15}/><span>PLAYBACK HEALTH</span></div><strong>{playbackHealth||'—'}{playbackHealth?<em>%</em>:null}</strong><small>Active time compared with active + buffering</small></article>
+        <article><div><RotateCcw size={15}/><span>FILTERED SEEKS</span></div><strong>{recentSeekCount}</strong><small>{Math.round(recentBufferSeconds)}s buffering · jumps excluded from coverage</small></article>
+      </div>
+    </section>
 
     <section className="connected-card precision-overview-card">
       <div className="precision-overview-main">
@@ -1073,13 +1163,22 @@ function LearningTracker({workspace,onAdd,onUpdate,onGenerateKit}:any){
     </section>
 
     <section className="learning-history">
-      <div className="learning-history-head"><div><span>YOUR LEARNING STREAM</span><h3>Resume, review and build Study Kits</h3></div><small>{workspace.videos.length} tracked</small></div>
-      {workspace.videos.length?<div className="learning-card-grid">{workspace.videos.map((video:Row)=><LearningVideoCard key={video.id} video={video} workspace={workspace} onUpdate={onUpdate} onGenerateKit={onGenerateKit}/>)}</div>:<Empty icon={Video} title="No connected lessons yet" copy="Open Precision Theater for YouTube or add a lesson manually above."/>}
+      <div className="learning-history-head"><div><span>YOUR LEARNING STREAM</span><h3>Resume, review and build Study Kits</h3></div><small>{visibleLearningVideos.length} shown · {workspace.videos.length} tracked</small></div>
+      <div className="learning-stream-toolbar">
+        <label><Search size={14}/><input value={learningSearch} onChange={e=>setLearningSearch(e.target.value)} placeholder="Search lessons, subjects or chapters…"/></label>
+        <div>
+          <button className={learningFilter==='all'?'active':''} onClick={()=>setLearningFilter('all')}>All</button>
+          <button className={learningFilter==='continue'?'active':''} onClick={()=>setLearningFilter('continue')}>Continue <span>{resumeQueue}</span></button>
+          <button className={learningFilter==='complete'?'active':''} onClick={()=>setLearningFilter('complete')}>90%+ <span>{verifiedComplete}</span></button>
+          <button className={learningFilter==='mapping'?'active':''} onClick={()=>setLearningFilter('mapping')}>Needs Mapping <span>{needsMapping}</span></button>
+        </div>
+      </div>
+      {visibleLearningVideos.length?<div className="learning-card-grid">{visibleLearningVideos.map((video:Row)=><LearningVideoCard key={video.id} video={video} workspace={workspace} onUpdate={onUpdate} onMap={onMap} onGenerateKit={onGenerateKit}/>)}</div>:<Empty icon={Video} title={workspace.videos.length?'Nothing matches this view':'No connected lessons yet'} copy={workspace.videos.length?'Try another filter or search term.':'Open Precision Theater for YouTube or add a lesson manually above.'}/>}
     </section>
   </>
 }
 
-function LearningVideoCard({video,workspace,onUpdate,onGenerateKit}:any){
+function LearningVideoCard({video,workspace,onUpdate,onMap,onGenerateKit}:any){
   const progress=workspace.videoProgress.find((p:Row)=>p.video_id===video.id);
   const resource=workspace.resources.find((r:Row)=>r.metadata?.kind==='video_summary'&&r.metadata?.video_id===video.id);
   const kit=workspace.resources.find((r:Row)=>r.metadata?.kind==='ai_learning_artifacts'&&r.metadata?.video_id===video.id);
@@ -1090,6 +1189,10 @@ function LearningVideoCard({video,workspace,onUpdate,onGenerateKit}:any){
   const [completion,setCompletion]=useState(evidenceCompletion);
   const [watchedMinutes,setWatchedMinutes]=useState(evidenceMinutes);
   const [summary,setSummary]=useState(String(resource?.metadata?.summary||''));
+  const [mappingOpen,setMappingOpen]=useState(false);
+  const [mapSubject,setMapSubject]=useState(String(video.subject_id||''));
+  const [mapChapter,setMapChapter]=useState(String(video.chapter_id||''));
+  const [mapTopic,setMapTopic]=useState(String(video.topic_id||''));
   const subject=workspace.subjects.find((s:Row)=>s.id===video.subject_id);
   const chapter=workspace.chapters.find((ch:Row)=>ch.id===video.chapter_id);
   const topic=workspace.topics.find((t:Row)=>t.id===video.topic_id);
@@ -1098,6 +1201,11 @@ function LearningVideoCard({video,workspace,onUpdate,onGenerateKit}:any){
   const source=String(progress?.tracking_source||'manual');
   const confidence=Number(progress?.confidence||0);
   const sessionCount=Number(progress?.sessions||0);
+  const mapSubjectRow=workspace.subjects.find((s:Row)=>s.id===mapSubject);
+  const mapBookIds=new Set(workspace.books.filter((b:Row)=>normalized(b.subject)===normalized(mapSubjectRow?.name)).map((b:Row)=>b.id));
+  const mapChapters=workspace.chapters.filter((ch:Row)=>mapBookIds.has(ch.curriculum_book_id));
+  const mapTopics=workspace.topics.filter((t:Row)=>t.chapter_id===mapChapter);
+  const mappingNeedsHelp=!video.chapter_id||Number(video.classification_confidence||0)<0.55;
 
   return <article className={'connected-card learning-video-card '+(autoEvidence?'precision-video-card':'')}>
     <div className="learning-source-row"><span className={'provider-chip provider-'+String(video.provider||'other')}>{providerLabel(video)}</span><span className={autoEvidence?'precision-evidence-chip':''}>{autoEvidence?'VERIFIED '+evidenceCompletion+'%':completion+'% watched'}</span></div>
@@ -1118,9 +1226,17 @@ function LearningVideoCard({video,workspace,onUpdate,onGenerateKit}:any){
     </div>}
 
     {autoEvidence?<div className="video-evidence-note"><ShieldCheck size={14}/><span>Progress is protected precision evidence from <b>{source.replaceAll('_',' ')}</b>. Manual edits can change the summary, not the measured watch data.</span></div>:null}
-    <label className="learning-summary-label">Learning summary<textarea value={summary} onChange={e=>setSummary(e.target.value)} placeholder="Key concepts, formulas, examples, doubts…"/></label>
+    {mappingOpen?<div className="video-mapping-editor">
+      <div><span>VERIFY CURRICULUM MAPPING</span><button onClick={()=>setMappingOpen(false)}><X size={13}/></button></div>
+      <label>Subject<select value={mapSubject} onChange={e=>{setMapSubject(e.target.value);setMapChapter('');setMapTopic('')}}><option value="">Unassigned</option>{workspace.subjects.map((s:Row)=><option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+      <label>Chapter<select value={mapChapter} onChange={e=>{setMapChapter(e.target.value);setMapTopic('')}}><option value="">No chapter</option>{mapChapters.map((ch:Row)=><option key={ch.id} value={ch.id}>{ch.title}</option>)}</select></label>
+      <label>Topic<select value={mapTopic} onChange={e=>setMapTopic(e.target.value)}><option value="">No topic</option>{mapTopics.map((t:Row)=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label>
+      <button className="mapping-save" onClick={async()=>{await onMap(video,{subjectId:mapSubject,chapterId:mapChapter,topicId:mapTopic});setMappingOpen(false)}}><Check size={13}/>Confirm mapping</button>
+    </div>:null}
+        <label className="learning-summary-label">Learning summary<textarea value={summary} onChange={e=>setSummary(e.target.value)} placeholder="Key concepts, formulas, examples, doubts…"/></label>
     {kit?<div className="learning-kit-preview"><span>STUDY KIT</span><p>{String(kit.metadata?.summary||'')}</p><small>{Array.isArray(kit.metadata?.key_points)?kit.metadata.key_points.length:0} key points · {kit.metadata?.ai_used?'AI-assisted':'quick fallback'}</small></div>:null}
     <div className="learning-card-actions">
+      <button className={mappingNeedsHelp?'mapping-alert-button':'mapping-button'} onClick={()=>setMappingOpen(v=>!v)}><Target size={14}/>{mappingNeedsHelp?'Fix mapping':'Mapping'}</button>
       {video.provider==='youtube'&&video.url?<a href={'/theater?url='+encodeURIComponent(String(video.url))+'&title='+encodeURIComponent(String(video.title||''))}><Play size={14}/>Open in Theater</a>:video.url?<a href={video.url} target="_blank" rel="noreferrer"><Play size={14}/>Open lesson</a>:null}
       <button onClick={()=>onUpdate(video,{completion,watchedMinutes,summary})}><Check size={14}/>{autoEvidence?'Save summary':'Save progress'}</button>
       <button className="kit-button" disabled={summary.trim().length<20} onClick={()=>onGenerateKit(video,summary)}><Sparkles size={14}/>Build study kit</button>
