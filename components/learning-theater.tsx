@@ -241,6 +241,17 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
   const projectedVerified=duration>0?Math.min(100,projectedCoverageSeconds/duration*100):serverMetrics.verifiedCompletion;
   const projectedEngaged=baseEvidence.engaged+liveMetrics.engagedSeconds;
   const projectedContent=baseEvidence.content+liveMetrics.contentSeconds;
+  const liveBufferRatio=liveMetrics.engagedSeconds+liveMetrics.bufferSeconds>0
+    ? liveMetrics.bufferSeconds/(liveMetrics.engagedSeconds+liveMetrics.bufferSeconds)
+    : 0;
+  const liveSeekRate=liveMetrics.contentSeconds>30
+    ? liveMetrics.seekCount/Math.max(1,liveMetrics.contentSeconds/600)
+    : liveMetrics.seekCount;
+  const sessionQuality=liveBufferRatio>=0.3
+    ? {label:'Connection unstable',detail:Math.round(liveBufferRatio*100)+'% of active+buffer time was buffering',kind:'warning'}
+    : liveSeekRate>=8
+      ? {label:'Seek-heavy playback',detail:Math.round(liveSeekRate)+' seeks per ~10 min of content',kind:'info'}
+      : {label:'Session signal stable',detail:'Playback evidence looks consistent',kind:'ok'};
   const filteredChapters=chapters.filter(ch=>!subjectId||ch.subject_id===subjectId||ch._subject_id===subjectId);
 
   useEffect(()=>{titleRef.current=title},[title]);
@@ -791,6 +802,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
               <span><b>{prettySeconds(liveMetrics.bufferSeconds)}</b> buffering</span>
               <span><b>{fmt(Math.max(serverMetrics.furthestPosition,current))}</b> furthest</span>
             </div>
+            <div className={'session-quality '+sessionQuality.kind}><Activity size={14}/><div><b>{sessionQuality.label}</b><small>{sessionQuality.detail}</small></div></div>
             {mapping?<div className="theater-map-status"><Check/><div><b>{mapping.chapter_id?'Curriculum mapped':'Lesson tracked safely'}</b><small>{mapping.confidence?Math.round(Number(mapping.confidence)*100)+'% curriculum mapping confidence':'Uncertain academic mapping stays unassigned.'}</small></div></div>:null}
           </section>
 
