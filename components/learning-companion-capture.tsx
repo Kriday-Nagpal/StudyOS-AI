@@ -40,12 +40,16 @@ export default function LearningCompanionCapture({
   initialText,
   initialPosition = 0,
   initialDuration = 0,
+  initialSource = 'manual',
+  initialPlaybackRate = 1,
 }: {
   initialUrl: string;
   initialTitle: string;
   initialText: string;
   initialPosition?: number;
   initialDuration?: number;
+  initialSource?: string;
+  initialPlaybackRate?: number;
 }) {
   const supabase = getSupabaseClient();
   const [loading,setLoading]=useState(true);
@@ -64,9 +68,10 @@ export default function LearningCompanionCapture({
   const [subjectId,setSubjectId]=useState('');
   const [chapterId,setChapterId]=useState('');
   const [topicId,setTopicId]=useState('');
-  const initialCompletion = initialDuration > 0 ? Math.max(0,Math.min(100,initialPosition/initialDuration*100)) : 0;
-  const [completion,setCompletion]=useState(Math.round(initialCompletion));
-  const [watchedMinutes,setWatchedMinutes]=useState(Math.max(0,Math.round(initialPosition/60)));
+  const isBookmarkSnapshot=initialSource==='bookmark';
+  const initialPositionPercent = initialDuration > 0 ? Math.max(0,Math.min(100,initialPosition/initialDuration*100)) : 0;
+  const [completion,setCompletion]=useState(0);
+  const [watchedMinutes,setWatchedMinutes]=useState(0);
   const [generateKit,setGenerateKit]=useState(Boolean(initialText.trim()));
   const [result,setResult]=useState<{flashcards?:number;doubts?:number;ai?:boolean}|null>(null);
 
@@ -140,16 +145,41 @@ export default function LearningCompanionCapture({
     if(videoRes.error||!videoRes.data){setError(videoRes.error?.message||'Could not save this lesson.');setSaving(false);return;}
     const video=videoRes.data;
 
-    const progressRes=await supabase.from('video_progress').upsert({
+    const {data:existingProgress}=await supabase.from('video_progress').select('*').eq('user_id',session.user.id).eq('video_id',video.id).maybeSingle();
+    const snapshotPosition=Math.max(0,Math.round(initialPosition||0));
+    const manualWatched=Math.max(0,Math.round(watchedMinutes*60));
+    const preciseExisting=Number(existingProgress?.tracking_version||1)>=2;
+    const progressPayload=isBookmarkSnapshot ? {
       user_id:session.user.id,
       video_id:video.id,
-      watched_seconds:Math.max(0,watchedMinutes*60),
-      completion:Math.max(0,Math.min(100,completion)),
-      last_position_seconds:Math.max(0,watchedMinutes*60),
-      sessions:1,
+      watched_seconds:Number(existingProgress?.watched_seconds||0),
+      completion:Number(existingProgress?.completion||0),
+      verified_completion:Number(existingProgress?.verified_completion||0),
+      engaged_seconds:Number(existingProgress?.engaged_seconds||0),
+      content_seconds:Number(existingProgress?.content_seconds||0),
+      last_position_seconds:snapshotPosition,
+      furthest_position_seconds:Math.max(Number(existingProgress?.furthest_position_seconds||existingProgress?.last_position_seconds||0),snapshotPosition),
+      sessions:Number(existingProgress?.sessions||0),
+      confidence:existingProgress?.confidence||4,
+      tracking_version:preciseExisting?Number(existingProgress?.tracking_version||2):1,
+      tracking_source:preciseExisting?existingProgress?.tracking_source||'theater':'bookmark',
+      coverage_ranges:Array.isArray(existingProgress?.coverage_ranges)?existingProgress.coverage_ranges:[],
       last_watched_at:new Date().toISOString(),
       updated_at:new Date().toISOString()
-    },{onConflict:'user_id,video_id'});
+    } : {
+      user_id:session.user.id,
+      video_id:video.id,
+      watched_seconds:manualWatched,
+      completion:Math.max(0,Math.min(100,completion)),
+      last_position_seconds:manualWatched,
+      furthest_position_seconds:Math.max(Number(existingProgress?.furthest_position_seconds||0),manualWatched),
+      sessions:Number(existingProgress?.sessions||0)+1,
+      confidence:existingProgress?.confidence||null,
+      tracking_source:'manual',
+      last_watched_at:new Date().toISOString(),
+      updated_at:new Date().toISOString()
+    };
+    const progressRes=await supabase.from('video_progress').upsert(progressPayload,{onConflict:'user_id,video_id'});
     if(progressRes.error){setError(progressRes.error.message);setSaving(false);return;}
 
     if(notes.trim()){
@@ -191,7 +221,7 @@ export default function LearningCompanionCapture({
       <div>
         <span className="capture-kicker">LEARNING COMPANION</span>
         <h1>Turn this page into learning evidence.</h1>
-        <p>Review the URL, map it to your subject and optionally turn your selected notes into a private study kit.</p>
+        <p>Review the lesson evidence, map it to your subject and optionally turn your selected notes into a private study kit. Position snapshots stay separate from verified watch coverage.</p>
         <div className="capture-proof"><LockKeyhole/><span>StudyOS does not read your browser history. Only this page and the text you deliberately selected are shown here.</span></div>
       </div>
       <small>{profile?.full_name?'Capturing for '+profile.full_name:'Private StudyOS workspace'}</small>
@@ -208,11 +238,10 @@ export default function LearningCompanionCapture({
           <label>Chapter<select value={chapterId} onChange={e=>{setChapterId(e.target.value);setTopicId('')}}><option value="">No chapter</option>{availableChapters.map(ch=><option key={ch.id} value={ch.id}>{ch.title}</option>)}</select></label>
           <label>Topic<select value={topicId} onChange={e=>setTopicId(e.target.value)}><option value="">No topic</option>{availableTopics.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}</select></label>
         </div>
-        <div className="capture-grid two">
+        {isBookmarkSnapshot&&initialDuration>0?<div className="capture-snapshot-card"><Check size={15}/><div><b>Position snapshot captured</b><span>{Math.round(initialPosition)}s / {Math.round(initialDuration)}s · {Math.round(initialPositionPercent)}% playhead · {initialPlaybackRate.toFixed(2)}× speed</span><small>This is a resume/evidence snapshot, not verified watch time. StudyOS will not turn this position into fake active minutes.</small></div></div>:<div className="capture-grid two">
           <label>Watched minutes<input type="number" min="0" max="720" value={watchedMinutes} onChange={e=>setWatchedMinutes(Number(e.target.value))}/></label>
           <label>Completion<input type="number" min="0" max="100" value={completion} onChange={e=>setCompletion(Math.max(0,Math.min(100,Number(e.target.value))))}/></label>
-        </div>
-        {initialDuration>0?<div className="capture-auto-progress"><Check size={14}/><span>Chrome Bookmark Companion detected a video at <b>{Math.round(initialPosition)}s / {Math.round(initialDuration)}s</b> and prefilled this progress.</span></div>:null}
+        </div>}
         <label>Selected notes / transcript excerpt<textarea value={notes} onChange={e=>setNotes(e.target.value.slice(0,12000))} placeholder="Select useful text on the lesson page before using Capture to StudyOS, or add your own notes here."/></label>
         <label className="capture-checkbox"><input type="checkbox" checked={generateKit} onChange={e=>setGenerateKit(e.target.checked)}/><div><b>Build a study kit after capture</b><span>Creates a concise summary, flashcards and only the doubts/questions actually present in these notes.</span></div></label>
         {error?<div className="capture-error">{error}</div>:null}

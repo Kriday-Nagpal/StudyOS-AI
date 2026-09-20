@@ -175,7 +175,11 @@ async function recordSync(payload, response) {
     platform: platformFor(payload.url),
     currentTime: Number(payload.currentTime || 0),
     duration: Number(payload.duration || 0),
-    completion: Number(response?.completion || 0),
+    completion: Number(response?.verified_completion ?? response?.completion ?? 0),
+    verifiedCompletion: Number(response?.verified_completion || 0),
+    engagedSeconds: Number(response?.engaged_seconds || 0),
+    contentSeconds: Number(response?.content_seconds || 0),
+    trackingConfidence: Number(response?.tracking_confidence || 0),
     mapped: response?.mapped || null
   };
 
@@ -194,7 +198,7 @@ async function recordSync(payload, response) {
 
 async function syncProgress(payload) {
   const settings = await getSettings();
-  const manual = Boolean(payload?.manual || payload?.force);
+  const manual = Boolean(payload?.manual);
 
   if (!manual && !settings.autoSync) {
     return { ok: false, paused: true };

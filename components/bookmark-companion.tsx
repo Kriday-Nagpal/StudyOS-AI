@@ -66,8 +66,8 @@ export default function BookmarkCompanion(){
       <div><Check/><b>Current page URL</b><span>Automatic</span></div>
       <div><Check/><b>Page / lesson title</b><span>Automatic</span></div>
       <div><Check/><b>Selected notes</b><span>When you deliberately select text</span></div>
-      <div><Check/><b>Video position + duration</b><span>When the page exposes a normal HTML5 video</span></div>
-      <div><ShieldCheck/><b>No browser-history permission</b><span>Runs only when you click the bookmark</span></div>
+      <div><Check/><b>Video position snapshot</b><span>Position + duration only; never claimed as watched time</span></div>
+      <div><ShieldCheck/><b>Evidence-safe capture</b><span>Runs only when you click; snapshot ≠ verified coverage</span></div>
     </section>
 
     <section className="bookmark-honesty">
