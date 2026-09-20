@@ -217,3 +217,52 @@ linear-gradient(135deg,#fff,#fbfaff)}.precision-overview-main>span{color:#715fc9
   .precision-metrics,.precision-submetrics{grid-template-columns:1fr 1fr}.timeline-heading{display:grid;gap:4px}.timeline-foot{font-size:5px}
   .learning-metrics-six{grid-template-columns:1fr}.video-evidence-grid{grid-template-columns:1fr 1fr}.precision-overview-card{padding:14px}
 }
+
+
+/* =========================
+   Learning Intelligence V3
+   ========================= */
+.learning-health-card{margin-top:14px;padding:18px;border-color:#dfd9eb;background:
+radial-gradient(circle at 10% -15%,rgba(104,82,214,.11),transparent 35%),
+linear-gradient(135deg,#fff,#fbfaff);box-shadow:0 14px 38px rgba(41,31,67,.055)}
+.learning-health-card>header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}
+.learning-health-card>header span{display:block;color:#7160c6;font-size:6px;font-weight:900;letter-spacing:.12em}
+.learning-health-card>header h3{margin:5px 0 4px;font-size:17px;letter-spacing:-.035em}
+.learning-health-card>header p{margin:0;color:#8f8798;font-size:7px}
+.learning-health-card>header>a{display:flex;align-items:center;gap:5px;padding:8px 10px;border-radius:9px;background:#241e34;color:#fff;text-decoration:none;font-size:6px;font-weight:850}
+.learning-health-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
+.learning-health-grid article{min-height:116px;padding:11px;border:1px solid #e9e5ef;border-radius:12px;background:rgba(255,255,255,.84)}
+.learning-health-grid article.needs-attention{border-color:#ead9b7;background:linear-gradient(145deg,#fffaf2,#fff)}
+.learning-health-grid article>div{display:flex;align-items:center;gap:6px;color:#7b6cc7}
+.learning-health-grid article.needs-attention>div{color:#b67d32}
+.learning-health-grid article svg{width:13px}
+.learning-health-grid article span{font-size:5.4px;font-weight:900;letter-spacing:.08em}
+.learning-health-grid strong{display:block;margin-top:11px;font-size:24px;line-height:1;letter-spacing:-.05em;color:#4d455a}
+.learning-health-grid strong em{margin-left:2px;font-style:normal;font-size:8px;color:#8d8595}
+.learning-health-grid small{display:block;margin-top:7px;color:#9a93a0;font-size:5.4px;line-height:1.45}
+
+.video-mapping-editor{display:grid;grid-template-columns:repeat(3,1fr) auto;gap:7px;margin-top:10px;padding:10px;border:1px solid #dfd8ee;border-radius:11px;background:linear-gradient(135deg,#f8f5ff,#fbfdff)}
+.video-mapping-editor>div:first-child{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between}
+.video-mapping-editor>div:first-child span{color:#6d59c9;font-size:5.5px;font-weight:900;letter-spacing:.1em}
+.video-mapping-editor>div:first-child button{display:grid;place-items:center;width:24px;height:24px;border:0;border-radius:7px;background:#ece7f7;color:#756a82;cursor:pointer}
+.video-mapping-editor label{display:grid;gap:4px;color:#817989;font-size:5.6px;font-weight:800}
+.video-mapping-editor select{height:32px;min-width:0;padding:0 8px;border:1px solid #ddd6e8;border-radius:8px;background:#fff;color:#554d60;font:inherit;font-size:6px}
+.video-mapping-editor .mapping-save{align-self:end;height:32px;display:flex;align-items:center;justify-content:center;gap:5px;padding:0 10px;border:0;border-radius:8px;background:#6554cf;color:#fff;font-size:6px;font-weight:850;cursor:pointer}
+.mapping-button,.mapping-alert-button{display:flex!important;align-items:center!important;gap:5px!important}
+.mapping-alert-button{background:#fff7ea!important;color:#a96f25!important;border-color:#ead6b3!important}
+.mapping-button{background:#f4f1fb!important;color:#6c5bb8!important;border-color:#e1dbea!important}
+
+@media(max-width:1150px){
+  .learning-health-grid{grid-template-columns:repeat(3,1fr)}
+}
+@media(max-width:760px){
+  .learning-health-card>header{display:grid}
+  .learning-health-card>header>a{width:max-content}
+  .learning-health-grid{grid-template-columns:repeat(2,1fr)}
+  .video-mapping-editor{grid-template-columns:1fr 1fr}
+  .video-mapping-editor .mapping-save{grid-column:1/-1}
+}
+@media(max-width:480px){
+  .learning-health-grid{grid-template-columns:1fr}
+  .video-mapping-editor{grid-template-columns:1fr}
+}
