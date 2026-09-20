@@ -6,6 +6,8 @@ export const runtime = 'nodejs';
 export const maxDuration = 30;
 
 type Row = Record<string, any>;
+type CoverageRange = [number, number];
+type TrackingSource = 'theater'|'extension'|'bookmark'|'smart_launch'|'manual';
 
 const SUPPORTED_HOSTS = [
   'youtube.com',
@@ -18,6 +20,8 @@ const SUPPORTED_HOSTS = [
   'khanacademy.org',
 ];
 
+const TRACKING_SOURCES = new Set<TrackingSource>(['theater','extension','bookmark','smart_launch','manual']);
+
 function hostAllowed(hostname: string) {
   const host = hostname.toLowerCase().replace(/^www\./, '');
   return SUPPORTED_HOSTS.some((allowed) => host === allowed || host.endsWith('.' + allowed));
@@ -28,7 +32,6 @@ function providerFor(hostname: string) {
   if (host.includes('youtube.com') || host.includes('youtu.be')) return 'youtube';
   if (host.includes('diksha.gov.in')) return 'diksha';
   if (host.includes('khanacademy.org')) return 'khan_academy';
-  if (host.includes('pw.live') || host.includes('physicswallah') || host.includes('pwskills')) return 'other';
   return 'other';
 }
 
@@ -69,6 +72,65 @@ function stripTracking(raw: string) {
 function clamp(value: unknown, min: number, max: number) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : min;
+}
+
+function sourceConfidence(source: TrackingSource) {
+  if (source === 'theater') return 1;
+  if (source === 'extension') return 0.94;
+  if (source === 'bookmark') return 0.78;
+  if (source === 'smart_launch') return 0.55;
+  return 0.45;
+}
+
+function confidenceStars(source: TrackingSource) {
+  return Math.max(1, Math.min(5, Math.round(sourceConfidence(source) * 5)));
+}
+
+function trackingSource(value: unknown): TrackingSource {
+  return TRACKING_SOURCES.has(value as TrackingSource) ? value as TrackingSource : 'extension';
+}
+
+function safeSessionId(value: unknown) {
+  const sessionId = String(value || '').trim().slice(0, 160);
+  return sessionId.length >= 8 ? sessionId : '';
+}
+
+function mergeCoverageRanges(input: unknown, duration: number): CoverageRange[] {
+  if (!Array.isArray(input) || duration <= 0) return [];
+  const ranges: CoverageRange[] = [];
+  for (const raw of input.slice(0, 300)) {
+    if (!Array.isArray(raw) || raw.length < 2) continue;
+    const start = clamp(raw[0], 0, duration);
+    const end = clamp(raw[1], 0, duration);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    const left = Math.min(start, end);
+    const right = Math.max(start, end);
+    if (right - left < 0.2) continue;
+    ranges.push([left, right]);
+  }
+  ranges.sort((a,b)=>a[0]-b[0]);
+  const merged: CoverageRange[] = [];
+  for (const range of ranges) {
+    const last = merged[merged.length - 1];
+    if (!last || range[0] > last[1] + 1.25) merged.push([...range] as CoverageRange);
+    else last[1] = Math.max(last[1], range[1]);
+  }
+  return merged.slice(0, 180).map(([start,end])=>[
+    Number(start.toFixed(2)),
+    Number(end.toFixed(2)),
+  ]);
+}
+
+function coverageSeconds(ranges: CoverageRange[]) {
+  return ranges.reduce((total,[start,end])=>total + Math.max(0,end-start),0);
+}
+
+function validIsoDate(value: unknown) {
+  const parsed = new Date(String(value || ''));
+  if (!Number.isFinite(parsed.getTime())) return null;
+  const now = Date.now();
+  if (parsed.getTime() > now + 5 * 60 * 1000 || parsed.getTime() < now - 24 * 60 * 60 * 1000) return null;
+  return parsed.toISOString();
 }
 
 async function heuristicMapping(supabase: any, profile: Row | null, title: string, userId: string) {
@@ -193,7 +255,7 @@ async function heuristicMapping(supabase: any, profile: Row | null, title: strin
         confidence = aiConfidence;
       }
     } catch {
-      // Heuristic mapping remains the fallback when AI Gateway is unavailable.
+      // Deterministic curriculum matching remains the fallback.
     }
   }
 
@@ -214,6 +276,18 @@ export async function POST(request: Request) {
       currentTime?: number;
       duration?: number;
       ended?: boolean;
+      source?: TrackingSource;
+      clientSessionId?: string;
+      sessionStartedAt?: string;
+      sessionEngagedSeconds?: number;
+      sessionContentSeconds?: number;
+      coverageRanges?: CoverageRange[];
+      seekCount?: number;
+      pauseCount?: number;
+      bufferSeconds?: number;
+      playbackRate?: number;
+      event?: string;
+      visible?: boolean;
     };
 
     if (!body.url || !body.title) return Response.json({ error: 'url and title are required' }, { status: 400 });
@@ -228,10 +302,11 @@ export async function POST(request: Request) {
 
     const canonicalUrl = stripTracking(parsed.toString());
     const provider = providerFor(parsed.hostname);
+    const source = trackingSource(body.source);
+    const clientSessionId = safeSessionId(body.clientSessionId);
     const currentTime = clamp(body.currentTime, 0, 24 * 60 * 60);
     const duration = clamp(body.duration, 0, 24 * 60 * 60);
-    const calculated = duration > 0 ? Math.min(100, currentTime / duration * 100) : 0;
-    const completion = body.ended ? 100 : calculated;
+    const positionCompletion = duration > 0 ? Math.min(100, currentTime / duration * 100) : 0;
 
     const [{ data: profile }, { data: existingVideo }] = await Promise.all([
       supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
@@ -278,17 +353,104 @@ export async function POST(request: Request) {
       .eq('video_id', video.id)
       .maybeSingle();
 
-    const maxWatched = Math.max(Number(previous?.watched_seconds || 0), Math.round(currentTime));
-    const bestCompletion = Math.max(Number(previous?.completion || 0), completion);
+    const previousRanges = mergeCoverageRanges(previous?.coverage_ranges || [], duration);
+    const incomingRanges = mergeCoverageRanges(body.coverageRanges || [], duration);
+    const allRanges = mergeCoverageRanges([...previousRanges, ...incomingRanges], duration);
+    const uniqueCoverageSeconds = coverageSeconds(allRanges);
+    const verifiedCompletion = duration > 0
+      ? Math.min(100, uniqueCoverageSeconds / duration * 100)
+      : Number(previous?.verified_completion || 0);
+
+    let engagedDelta = 0;
+    let contentDelta = 0;
+    let sessionIncrement = 0;
+    let sessionCoverageSeconds = incomingRanges.length ? coverageSeconds(incomingRanges) : 0;
+
+    if (clientSessionId) {
+      const { data: existingSession } = await supabase
+        .from('video_tracking_sessions')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('video_id', video.id)
+        .eq('client_session_id', clientSessionId)
+        .maybeSingle();
+
+      const incomingEngaged = Math.round(clamp(body.sessionEngagedSeconds, 0, 24 * 60 * 60));
+      const incomingContent = Math.round(clamp(body.sessionContentSeconds, 0, 24 * 60 * 60 * 4));
+      const oldEngaged = Number(existingSession?.engaged_seconds || 0);
+      const oldContent = Number(existingSession?.content_seconds || 0);
+      engagedDelta = Math.max(0, incomingEngaged - oldEngaged);
+      contentDelta = Math.max(0, incomingContent - oldContent);
+      sessionIncrement = existingSession ? 0 : 1;
+
+      const sessionRanges = mergeCoverageRanges([
+        ...(Array.isArray(existingSession?.coverage_ranges) ? existingSession.coverage_ranges : []),
+        ...incomingRanges,
+      ], duration);
+      sessionCoverageSeconds = coverageSeconds(sessionRanges);
+
+      const startedAt = existingSession?.started_at || validIsoDate(body.sessionStartedAt) || new Date().toISOString();
+      const sessionPayload = {
+        user_id: user.id,
+        video_id: video.id,
+        client_session_id: clientSessionId,
+        source,
+        started_at: startedAt,
+        last_event_at: new Date().toISOString(),
+        ended_at: body.ended ? new Date().toISOString() : existingSession?.ended_at || null,
+        engaged_seconds: Math.max(oldEngaged, incomingEngaged),
+        content_seconds: Math.max(oldContent, incomingContent),
+        coverage_seconds: Math.round(sessionCoverageSeconds),
+        seek_count: Math.max(Number(existingSession?.seek_count || 0), Math.round(clamp(body.seekCount, 0, 10000))),
+        pause_count: Math.max(Number(existingSession?.pause_count || 0), Math.round(clamp(body.pauseCount, 0, 10000))),
+        buffer_seconds: Math.max(Number(existingSession?.buffer_seconds || 0), Math.round(clamp(body.bufferSeconds, 0, 24 * 60 * 60))),
+        last_position_seconds: Math.round(currentTime),
+        furthest_position_seconds: Math.max(Number(existingSession?.furthest_position_seconds || 0), Math.round(currentTime)),
+        playback_rate: Number(clamp(body.playbackRate || 1, 0.25, 4).toFixed(2)),
+        tracking_confidence: sourceConfidence(source),
+        coverage_ranges: sessionRanges,
+        metadata: {
+          last_event: String(body.event || 'progress').slice(0, 40),
+          visible: body.visible !== false,
+          tracking_version: 2,
+        },
+      };
+
+      const { error: sessionError } = await supabase
+        .from('video_tracking_sessions')
+        .upsert(sessionPayload, { onConflict: 'user_id,video_id,client_session_id' });
+      if (sessionError) throw sessionError;
+    }
+
+    const engagedTotal = Number(previous?.engaged_seconds || 0) + engagedDelta;
+    const contentTotal = Number(previous?.content_seconds || 0) + contentDelta;
+    const furthestPosition = Math.max(
+      Number(previous?.furthest_position_seconds || 0),
+      Number(previous?.last_position_seconds || 0),
+      Math.round(currentTime),
+    );
+    const hasVerifiedCoverage = allRanges.length > 0;
+    const previousLegacyCompletion = Number(previous?.completion || 0);
+    const compatibilityCompletion = hasVerifiedCoverage
+      ? Math.max(previousLegacyCompletion, verifiedCompletion)
+      : Math.max(previousLegacyCompletion, positionCompletion);
+    const sessionCount = Math.max(1, Number(previous?.sessions || 0) + sessionIncrement);
 
     const { error: progressError } = await supabase.from('video_progress').upsert({
       user_id: user.id,
       video_id: video.id,
-      watched_seconds: maxWatched,
-      completion: Number(bestCompletion.toFixed(2)),
+      watched_seconds: Math.max(Number(previous?.watched_seconds || 0), Math.round(engagedTotal)),
+      engaged_seconds: Math.round(engagedTotal),
+      content_seconds: Math.round(contentTotal),
+      completion: Number(compatibilityCompletion.toFixed(2)),
+      verified_completion: Number(verifiedCompletion.toFixed(2)),
+      coverage_ranges: allRanges,
       last_position_seconds: Math.round(currentTime),
-      sessions: Math.max(1, Number(previous?.sessions || 0)),
-      confidence: mapping.confidence,
+      furthest_position_seconds: furthestPosition,
+      sessions: sessionCount,
+      confidence: confidenceStars(source),
+      tracking_version: 2,
+      tracking_source: source,
       last_watched_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id,video_id' });
@@ -297,40 +459,63 @@ export async function POST(request: Request) {
 
     const continueTitle = 'Continue: ' + video.title;
     const reviewTitle = 'Review: ' + video.title;
+    const decisionCompletion = hasVerifiedCoverage ? verifiedCompletion : compatibilityCompletion;
+    const isComplete = decisionCompletion >= 90;
+    let recommendationWarning: string | null = null;
 
-    await supabase.from('study_recommendations').delete()
-      .eq('user_id', user.id)
-      .in('title', [continueTitle, reviewTitle]);
+    try {
+      await supabase.from('study_recommendations').delete()
+        .eq('user_id', user.id)
+        .in('title', [continueTitle, reviewTitle]);
 
-    const isComplete = bestCompletion >= 90;
-    const { error: recommendationError } = await supabase.from('study_recommendations').insert({
-      user_id: user.id,
-      subject_id: video.subject_id || null,
-      chapter_id: video.chapter_id || null,
-      topic_id: video.topic_id || null,
-      recommendation_type: isComplete ? 'review_learning' : 'continue_learning',
-      title: isComplete ? reviewTitle : continueTitle,
-      reason: isComplete
-        ? ['Automatically tracked lesson reached 90%+ completion', 'Review soon to strengthen retention']
-        : ['Automatically tracked lesson is unfinished', Math.round(bestCompletion) + '% complete'],
-      priority_score: isComplete ? 58 : 72,
-      estimated_minutes: isComplete ? 10 : Math.max(10, Math.min(30, duration > currentTime ? Math.round((duration-currentTime)/60) : 20)),
-      status: 'active',
-      valid_until: new Date(Date.now()+7*86400000).toISOString(),
-    });
-
-    if (recommendationError) throw recommendationError;
+      const { error: recommendationError } = await supabase.from('study_recommendations').insert({
+        user_id: user.id,
+        subject_id: video.subject_id || null,
+        chapter_id: video.chapter_id || null,
+        topic_id: video.topic_id || null,
+        recommendation_type: isComplete ? 'revise' : 'learn',
+        title: isComplete ? reviewTitle : continueTitle,
+        reason: hasVerifiedCoverage
+          ? isComplete
+            ? ['Verified unique coverage reached 90%+', 'Review soon to strengthen retention']
+            : ['Verified lesson coverage is unfinished', Math.round(decisionCompletion) + '% uniquely covered']
+          : isComplete
+            ? ['Legacy position-based lesson progress reached 90%+', 'Review soon to strengthen retention']
+            : ['Tracked lesson is unfinished', Math.round(decisionCompletion) + '% position progress'],
+        priority_score: isComplete ? 58 : 72,
+        estimated_minutes: isComplete
+          ? 10
+          : Math.max(10, Math.min(35, duration > 0 ? Math.round((duration * (1 - decisionCompletion / 100)) / 60) : 20)),
+        status: 'active',
+        valid_until: new Date(Date.now()+7*86400000).toISOString(),
+      });
+      if (recommendationError) recommendationWarning = recommendationError.message;
+    } catch (error) {
+      recommendationWarning = error instanceof Error ? error.message : 'Recommendation update failed';
+    }
 
     return Response.json({
       ok: true,
       video_id: video.id,
-      completion: Number(bestCompletion.toFixed(1)),
+      completion: Number(compatibilityCompletion.toFixed(1)),
+      verified_completion: Number(verifiedCompletion.toFixed(1)),
+      engaged_seconds: Math.round(engagedTotal),
+      content_seconds: Math.round(contentTotal),
+      furthest_position_seconds: furthestPosition,
+      last_position_seconds: Math.round(currentTime),
+      coverage_seconds: Math.round(uniqueCoverageSeconds),
+      duration_seconds: Math.round(duration),
+      sessions: sessionCount,
+      session_coverage_seconds: Math.round(sessionCoverageSeconds),
+      tracking_source: source,
+      tracking_confidence: sourceConfidence(source),
       mapped: {
         subject_id: video.subject_id,
         chapter_id: video.chapter_id,
         topic_id: video.topic_id,
         confidence: mapping.confidence,
       },
+      warning: recommendationWarning,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Automatic learning tracking failed';
