@@ -168,7 +168,18 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
   const supabase=getSupabaseClient();
   const playerRef=useRef<YTPlayer|null>(null);
   const titleRef=useRef(initialTitle);
-  const metricsRef=useRef<SessionMetrics>(newSession('initial'));
+  const metricsRef=useRef<SessionMetrics>({
+    clientSessionId:'pending-session',
+    startedAt:'',
+    engagedSeconds:0,
+    contentSeconds:0,
+    coverageRanges:[],
+    seekCount:0,
+    pauseCount:0,
+    bufferSeconds:0,
+    ended:false,
+    lastSeen:0,
+  });
   const baseCoverageRef=useRef<CoverageRange[]>([]);
   const baseEngagedRef=useRef(0);
   const baseContentRef=useRef(0);
@@ -307,8 +318,8 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
   const syncYoutube=useCallback(async(force=false,event='progress',keepalive=false)=>{
     const player=playerRef.current;
     if(!player||!session||!loadedUrl)return false;
-    if(!trackingEnabled&&!force)return false;
-    if(syncingRef.current&&!force)return false;
+    if(!trackingEnabled&&event!=='manual')return false;
+    if(syncingRef.current)return false;
 
     const seconds=Math.max(0,Number(player.getCurrentTime()||0));
     const total=Math.max(0,Number(player.getDuration()||0));
@@ -753,7 +764,7 @@ export default function LearningTheater({initialUrl='',initialTitle=''}:{initial
 
         <aside className="theater-side theater-side-v2">
           <section className="precision-card">
-            <header><div><span>VERIFIED LEARNING</span><h2>{title||'YouTube lesson'}</h2></div><div className="confidence-ring">{Math.round(serverMetrics.trackingConfidence*100)}<small>%</small></div></header>
+            <header><div><span>VERIFIED LEARNING</span><h2>{title||'YouTube lesson'}</h2></div><div className="confidence-ring" style={{background:`radial-gradient(circle,#fff 55%,transparent 56%),conic-gradient(#65b988 ${Math.max(0,Math.min(100,serverMetrics.trackingConfidence*100))}%,#ebe8f0 0)`}}>{Math.round(serverMetrics.trackingConfidence*100)}<small>%</small></div></header>
             <div className="precision-metrics">
               <div><Target/><span><b>{projectedVerified.toFixed(1)}%</b><small>unique coverage</small></span></div>
               <div><Clock3/><span><b>{prettySeconds(projectedEngaged)}</b><small>active watch time</small></span></div>
