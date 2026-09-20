@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BarChart3, Bell, BookOpen, Brain, CalendarDays, Check, ChevronRight, Clock3,
   FileText, Flame, FolderOpen, Library, ListPlus, Loader2, LockKeyhole, LogOut, Menu, Moon, Play,
-  Plus, RotateCcw, Search, Send, Settings, Sparkles, Sun, Target, Timer, Upload, Video, X,
+  Plus, RotateCcw, Search, Send, Settings, ShieldCheck, Sparkles, Sun, Target, Timer, Upload, Video, X,
 } from 'lucide-react';
 import { getSupabaseClient, isSupabaseConfigured } from '@/lib/supabase';
 import StudyOSAuth from '@/components/auth/studyos-auth';
